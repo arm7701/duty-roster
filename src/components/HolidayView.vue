@@ -75,14 +75,31 @@ const defaultPersonnelList: OfficerInfo[] = [
 ]
 
 const availablePersonnel = computed<OfficerInfo[]>(() => {
+  const map = new Map<string, OfficerInfo>()
+
+  // 1. นำรายชื่อหลักทั้ง 9 นายของ SATOPS ใส่ก่อนเสมอ
+  defaultPersonnelList.forEach((p) => {
+    map.set(p.name, { ...p })
+  })
+
+  // 2. ผสานหรือเพิ่มเติมจาก props.personnelList ถ้ามี
   if (props.personnelList && props.personnelList.length > 0) {
-    return props.personnelList.map((p) => ({
-      name: p.name,
-      division: p.division || 'SOD',
-      roles: p.roles || 'กำลังพล'
-    }))
+    props.personnelList.forEach((p) => {
+      const existing = map.get(p.name)
+      if (existing) {
+        if (p.division) existing.division = p.division
+        if (p.roles) existing.roles = p.roles
+      } else {
+        map.set(p.name, {
+          name: p.name,
+          division: p.division || 'SOD',
+          roles: p.roles || 'กำลังพล'
+        })
+      }
+    })
   }
-  return defaultPersonnelList
+
+  return Array.from(map.values())
 })
 
 // ==========================================
@@ -795,6 +812,10 @@ const openAddLeaveForDate = (dateStr?: string, preselectedOfficer?: string, defa
 const openEditLeaveModal = (leave: PersonnelLeaveRecord) => {
   selectedLeave.value = leave
   leaveForm.value = { ...leave }
+  const officer = availablePersonnel.value.find((p) => p.name === leave.personnelName)
+  if (officer?.division) {
+    leaveForm.value.division = officer.division
+  }
   leaveModalMode.value = 'edit'
   isLeaveModalOpen.value = true
   isDayDetailModalOpen.value = false
@@ -1710,7 +1731,7 @@ const getOfficerInitials = (name: string) => {
             <div class="leave-header-title">
               <span class="leave-type-icon-lg">{{ LEAVE_TYPE_CONFIG[leaveForm.type].icon }}</span>
               <div>
-                <h3>{{ leaveModalMode === 'create' ? 'บันทึกคนลา / จำหน่าย / ไปราชการ' : 'แก้ไขสถานะกำลังพล' }}</h3>
+                <h3>{{ leaveModalMode === 'create' ? 'บันทึกคนลา / จำหน่าย / ไปราชการ' : `แก้ไขข้อมูลการลา: ${leaveForm.personnelName}` }}</h3>
                 <span class="header-dev-note">เชื่อมโยงหน้าบุคลากร (รอเชื่อม API/Store)</span>
               </div>
             </div>
@@ -1720,10 +1741,24 @@ const getOfficerInitials = (name: string) => {
           <form @submit.prevent="handleSaveLeave" class="gcal-form">
             <!-- เลือกกำลังพล & ประเภทการลา -->
             <div class="form-row-2">
-              <div class="form-group">
+              <!-- หากเป็นโหมดแก้ไข: แสดงข้อมูลกำลังพลคนนั้นคงที่ชัดเจน ไม่ต้องเลือกใหม่ -->
+              <div v-if="leaveModalMode === 'edit'" class="form-group">
+                <label>กำลังพลผู้ลา</label>
+                <div class="officer-fixed-card">
+                  <span class="officer-avatar-sm">{{ getOfficerInitials(leaveForm.personnelName) }}</span>
+                  <div class="officer-fixed-meta">
+                    <strong class="officer-fixed-name">{{ leaveForm.personnelName }}</strong>
+                    <span class="division-badge">{{ leaveForm.division }}</span>
+                  </div>
+                  <span class="locked-badge">🔒 กำลังพลเจ้าของรายการ</span>
+                </div>
+              </div>
+
+              <!-- หากเป็นโหมดสร้างใหม่: ให้เลือกกำลังพลจากรายการ -->
+              <div v-else class="form-group">
                 <label>เลือกกำลังพล *</label>
                 <select
-                  :value="leaveForm.personnelName"
+                  v-model="leaveForm.personnelName"
                   class="form-select"
                   required
                   @change="handleOfficerSelect(($event.target as HTMLSelectElement).value)"
@@ -2856,6 +2891,37 @@ const getOfficerInitials = (name: string) => {
 .form-group { display: flex; flex-direction: column; gap: 4px; }
 .form-group label { font-size: 11.5px; font-weight: 600; color: #475569; }
 .form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.officer-fixed-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 6px 12px;
+  min-height: 38px;
+}
+.officer-fixed-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.officer-fixed-name {
+  font-size: 13px;
+  color: #0f172a;
+  font-weight: 700;
+}
+.locked-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #475569;
+  background: #e2e8f0;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
 
 .form-input, .form-select, .form-textarea {
   border: 1px solid #cbd5e1;
