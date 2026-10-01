@@ -186,7 +186,7 @@ onMounted(async () => {
     <aside class="sidebar">
       <div class="brand-lockup"><div class="brand-mark"><span>✦</span></div><div><p class="brand-title">SATOPS</p><p class="brand-subtitle">DUTY CONTROL</p></div></div>
       <div class="sidebar-section-label">เมนูหลัก</div>
-      <nav class="main-nav" aria-label="เมนูหลัก"><button v-for="item in ['ภาพรวม', 'ตารางเวร', 'บุคลากร', 'วันลา / ไม่พร้อม', 'วันหยุด', 'สถิติ']" :key="item" :class="['nav-item', { active: activeNav === item }]" @click="activeNav = item"><span class="nav-icon">{{ { 'ภาพรวม': '⌂', 'ตารางเวร': '▤', 'บุคลากร': '♙', 'วันลา / ไม่พร้อม': '◷', 'วันหยุด': '◌', 'สถิติ': '▥' }[item] }}</span>{{ item }}<span v-if="item === 'วันลา / ไม่พร้อม'" class="nav-count">3</span></button></nav>
+      <nav class="main-nav" aria-label="เมนูหลัก"><button v-for="item in ['ภาพรวม', 'ตารางเวร', 'บุคลากร', 'วันหยุด/วันลา/วันจำหน่าย', 'สถิติ']" :key="item" :class="['nav-item', { active: activeNav === item }]" @click="activeNav = item"><span class="nav-icon">{{ { 'ภาพรวม': '⌂', 'ตารางเวร': '▤', 'บุคลากร': '♙', 'วันหยุด/วันลา/วันจำหน่าย': '📅', 'สถิติ': '▥' }[item] }}</span>{{ item }}</button></nav>
       <div class="sidebar-section-label system-label">ระบบ</div>
       <nav class="main-nav"><button v-for="item in ['ประวัติการแก้ไข', 'ผู้ใช้งาน', 'ตั้งค่า']" :key="item" :class="['nav-item', { active: activeNav === item }]" @click="activeNav = item"><span class="nav-icon">{{ { 'ประวัติการแก้ไข': '⌁', 'ผู้ใช้งาน': '♧', 'ตั้งค่า': '⚙' }[item] }}</span>{{ item }}</button></nav>
       <div class="sidebar-footer"><div class="secure-indicator"><span></span> ระบบปฏิบัติการปกติ</div><div class="sidebar-version">SATOPS v1.0.0 · DEMO DATA</div></div>
@@ -194,9 +194,11 @@ onMounted(async () => {
     <main class="main-content">
       <header class="topbar"><div class="breadcrumb"><span>ระบบบริหารจัดการเวร</span><b>/</b><strong>{{ activeNav }}</strong></div><div class="topbar-actions"><div class="top-search"><span>⌕</span><input v-model="search" placeholder="ค้นหาบุคลากร, วันที่..." aria-label="ค้นหา" /><kbd>⌘ K</kbd></div><button class="icon-button notification-button" aria-label="การแจ้งเตือน" @click="showNotifications = !showNotifications">♢<i></i></button><button class="profile-chip" @click="showProfile = !showProfile"><span class="avatar">{{ data.currentUser.initials }}</span><span><b>{{ data.currentUser.name }}</b><small>{{ data.currentUser.role }}</small></span><em>⌄</em></button></div><div v-if="showNotifications" class="popover notification-popover"><b>การแจ้งเตือน</b><p>มีบุคลากรไม่พร้อมปฏิบัติงาน 3 รายการ</p><small>อัปเดตล่าสุดเมื่อ 09:42 น.</small></div><div v-if="showProfile" class="popover profile-popover"><b>{{ data.currentUser.name }}</b><p>{{ data.currentUser.role }}</p><button>ออกจากระบบ</button></div></header>
       <div class="page-content">
-        <!-- หน้าวันหยุดราชการ (Holiday View) -->
-        <!-- TODO: สำหรับ Developer - สามารถเชื่อมต่อ props/events ข้อมูลตารางเวรกับหน้าวันหยุดได้ที่นี่ -->
-        <HolidayView v-if="activeNav === 'วันหยุด'" />
+        <!-- หน้าวันหยุด / วันลา / วันจำหน่าย (เชื่อมโยงรายชื่อบุคลากร - รอเชื่อม API/Store) -->
+        <HolidayView 
+          v-if="activeNav === 'วันหยุด/วันลา/วันจำหน่าย'" 
+          :personnelList="data?.personnel" 
+        />
 
         <template v-else>
           <section class="page-heading"><div><p class="eyebrow">ศูนย์ควบคุมการปฏิบัติงาน / 01</p><h1>ตารางเวรปฏิบัติงาน</h1><p class="heading-note">จัดการและติดตามกำลังพลประจำเวรประจำเดือน</p></div><div class="heading-actions"><button class="button button-secondary">⇩ <span>ส่งออก</span></button><button class="button button-primary" @click="openDutyForm()">＋ เพิ่มเวร</button></div></section>
