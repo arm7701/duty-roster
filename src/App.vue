@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import HolidayView from './components/HolidayView.vue'
-import { getHolidayByDate } from './data/holidays'
+// NOTE: ถอดการเชื่อมโยง getHolidayByDate ออกชั่วคราว เพื่อเว้นไว้ให้ dev ท่านอื่นเชื่อมต่อเอง
+// import { getHolidayByDate } from './data/holidays'
 
 type DutyRow = { date: string; day: string; dayShort: string; md: string; mdCode: string; fmo: string; fmoCode: string; gso: string; gsoCode: string; note: string }
 type DashboardData = { currentUser: { name: string; role: string; initials: string }; summary: Record<string, number>; schedule: DutyRow[]; personnel: { name: string; roles: string }[] }
@@ -30,14 +31,11 @@ const monthSchedule = computed<DutyRow[]>(() => {
   return Array.from({ length: 31 }, (_, index) => {
     const date = `2026-10-${String(index + 1).padStart(2, '0')}`
     const existing = data.value?.schedule.find((row) => row.date === date)
-    const holiday = getHolidayByDate(date)
     if (existing) {
-      if (!existing.note && holiday) {
-        existing.note = holiday.name
-      }
       return existing
     }
     const day = new Date(`${date}T00:00:00`).getDay()
+    // TODO: สำหรับ Developer - สามารถเชื่อมโยงข้อมูลวันหยุดจากหน้าวันหยุด (เช่น getHolidayByDate) มาใส่ที่ note ได้ที่นี่
     return { 
       date, 
       day: dayNames[day], 
@@ -45,7 +43,7 @@ const monthSchedule = computed<DutyRow[]>(() => {
       md: '', mdCode: '', 
       fmo: '', fmoCode: '', 
       gso: '', gsoCode: '', 
-      note: holiday ? holiday.name : '' 
+      note: '' 
     }
   })
 })
@@ -53,7 +51,9 @@ const visibleSchedule = computed(() => {
   if (!data.value) return []
   const query = search.value.trim().toLowerCase()
   const filteredByDay = monthSchedule.value.filter((row) => {
-    const isHolidayDate = ['เสาร์', 'อาทิตย์'].includes(row.day) || row.note.includes('ราชการ') || Boolean(getHolidayByDate(row.date))
+    // กรองวันหยุดตามวันเสาร์-อาทิตย์ หรือข้อความหมายเหตุในตารางเวร (เว้นส่วนการเชื่อมข้อมูลวันหยุดไว้ให้ dev เชื่อมต่อเอง)
+    // TODO: สำหรับ Developer - สามารถเชื่อมต่อข้อมูลวันหยุดเพิ่มเติมจากหน้าวันหยุดได้ที่นี่
+    const isHolidayDate = ['เสาร์', 'อาทิตย์'].includes(row.day) || row.note.includes('ราชการ') || row.note.includes('วันหยุด')
     if (dayFilter.value === 'workday') return !isHolidayDate
     if (dayFilter.value === 'holiday') return isHolidayDate
     return true
@@ -194,8 +194,9 @@ onMounted(async () => {
     <main class="main-content">
       <header class="topbar"><div class="breadcrumb"><span>ระบบบริหารจัดการเวร</span><b>/</b><strong>{{ activeNav }}</strong></div><div class="topbar-actions"><div class="top-search"><span>⌕</span><input v-model="search" placeholder="ค้นหาบุคลากร, วันที่..." aria-label="ค้นหา" /><kbd>⌘ K</kbd></div><button class="icon-button notification-button" aria-label="การแจ้งเตือน" @click="showNotifications = !showNotifications">♢<i></i></button><button class="profile-chip" @click="showProfile = !showProfile"><span class="avatar">{{ data.currentUser.initials }}</span><span><b>{{ data.currentUser.name }}</b><small>{{ data.currentUser.role }}</small></span><em>⌄</em></button></div><div v-if="showNotifications" class="popover notification-popover"><b>การแจ้งเตือน</b><p>มีบุคลากรไม่พร้อมปฏิบัติงาน 3 รายการ</p><small>อัปเดตล่าสุดเมื่อ 09:42 น.</small></div><div v-if="showProfile" class="popover profile-popover"><b>{{ data.currentUser.name }}</b><p>{{ data.currentUser.role }}</p><button>ออกจากระบบ</button></div></header>
       <div class="page-content">
-        <!-- หน้าวันหยุดราชการ (Holiday View เชื่อมโยงข้อมูลตารางเวร) -->
-        <HolidayView v-if="activeNav === 'วันหยุด'" :schedule="data?.schedule" />
+        <!-- หน้าวันหยุดราชการ (Holiday View) -->
+        <!-- TODO: สำหรับ Developer - สามารถเชื่อมต่อ props/events ข้อมูลตารางเวรกับหน้าวันหยุดได้ที่นี่ -->
+        <HolidayView v-if="activeNav === 'วันหยุด'" />
 
         <template v-else>
           <section class="page-heading"><div><p class="eyebrow">ศูนย์ควบคุมการปฏิบัติงาน / 01</p><h1>ตารางเวรปฏิบัติงาน</h1><p class="heading-note">จัดการและติดตามกำลังพลประจำเวรประจำเดือน</p></div><div class="heading-actions"><button class="button button-secondary">⇩ <span>ส่งออก</span></button><button class="button button-primary" @click="openDutyForm()">＋ เพิ่มเวร</button></div></section>

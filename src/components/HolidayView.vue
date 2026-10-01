@@ -3,59 +3,96 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   formatFullThaiDate,
   formatShortThaiDate,
-  getHolidaysForMonth,
-  getHolidaysForYear,
-  getUpcomingHolidays,
   RAW_HOLIDAYS,
   THAI_DAY_NAMES,
   THAI_DAY_SHORT,
   THAI_MONTH_NAMES,
   THAI_MONTH_SHORT
 } from '../data/holidays'
-import type { DayInfo, Holiday, HolidayCategory } from '../types/holiday'
+import type { Holiday, HolidayCategory } from '../types/holiday'
 
-// วันที่ปัจจุบันของระบบ (อิงตามเวลาเครื่อง/ระบบ)
-const now = ref(new Date())
-// Props รับข้อมูลตารางเวรจากระบบหลัก
+// ==========================================
+// 1. Types & Props (Data Isolation for Devs)
+// ==========================================
+type DutyRoster = {
+  date: string
+  day: string
+  dayShort: string
+  md: string
+  mdCode: string
+  fmo: string
+  fmoCode: string
+  gso: string
+  gsoCode: string
+  note: string
+}
+
+// Props สำหรับเชื่อมต่อข้อมูลกับหน้าอื่น (เว้นไว้สำหรับ Developer นำไปพัฒนาต่อ)
+// TODO: สำหรับ Developer - สามารถรับ props เช่น schedule จากหน้าหลักเพื่อนำมาแสดงผลได้
 const props = defineProps<{
-  schedule?: {
-    date: string
-    day: string
-    dayShort: string
-    md: string
-    mdCode: string
-    fmo: string
-    fmoCode: string
-    gso: string
-    gsoCode: string
-    note: string
-  }[]
+  schedule?: DutyRoster[]
 }>()
 
-const getDutyForDate = (dateStr: string) => {
-  return props.schedule?.find((s) => s.date === dateStr)
+// ฟังก์ชันดึงข้อมูลเวร (ปิดการเชื่อมโยงไว้ชั่วคราว เพื่อให้ dev ท่านอื่นเชื่อมต่อเอง)
+const getDutyForDate = (_dateStr: string): DutyRoster | undefined => {
+  // TODO: สำหรับ Developer - นำไปเปิดใช้งานเมื่อต้องการเชื่อมโยงข้อมูลผู้เข้าเวรกับวันหยุด เช่น:
+  // return props.schedule?.find((s) => s.date === _dateStr)
+  return undefined
 }
 
-// State ของปฏิทิน
-const currentYear = ref(2026) // ปีเริ่มต้น 2569 (2026)
-const currentMonth = ref(10)  // เดือนเริ่มต้น ตุลาคม (1-12)
-const selectedCategory = ref<'all' | HolidayCategory>('all')
-const viewMode = ref<'month' | 'year'>('month')
-const selectedHoliday = ref<Holiday | null>(null)
-const selectedDay = ref<DayInfo | null>(null)
-const showAddModal = ref(false)
-const isSidebarOpen = ref(true) // ควบคุมการเปิด/ปิดแถบไฮไลต์ด้านขวา
+// ==========================================
+// 2. State & Persistence (เพิ่ม / แก้ไข / ลบ)
+// ==========================================
+const STORAGE_KEY = 'satops_google_calendar_holidays_v1'
 
-const toggleSidebar = () => {
-  isSidebarOpen.value = !isSidebarOpen.value
+const loadInitialHolidays = (): Holiday[] => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed
+      }
+    }
+  } catch (err) {
+    console.error('Error loading holidays from localStorage', err)
+  }
+  return [...RAW_HOLIDAYS]
 }
 
-// ตรวจสอบว่าเดือนนั้นๆ มีวันหยุดราชการหรือไม่
-const hasHolidayInMonth = (year: number, month: number) => {
-  return getHolidaysForMonth(year, month).length > 0
+const holidaysList = ref<Holiday[]>(loadInitialHolidays())
+
+const saveHolidaysToStorage = () => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(holidaysList.value))
+  } catch (err) {
+    console.error('Error saving holidays to localStorage', err)
+  }
 }
 
-// วันที่ปัจจุบันในรูปแบบ YYYY-MM-DD
+const resetHolidaysToDefault = () => {
+  if (confirm('คุณต้องการรีเซ็ตข้อมูลวันหยุดทั้งหมดกลับเป็นค่าเริ่มต้นตามประกาศราชการหรือไม่? ข้อมูลที่คุณเพิ่มหรือแก้ไขจะถูกรีเซ็ต')) {
+    holidaysList.value = [...RAW_HOLIDAYS]
+    saveHolidaysToStorage()
+  }
+}
+
+// ==========================================
+// 3. Calendar Navigation & Clock
+// ==========================================
+const now = ref(new Date())
+let timerId: number | null = null
+
+onMounted(() => {
+  timerId = window.setInterval(() => {
+    now.value = new Date()
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (timerId !== null) clearInterval(timerId)
+})
+
 const todayString = computed(() => {
   const d = now.value
   const y = d.getFullYear()
@@ -64,7 +101,6 @@ const todayString = computed(() => {
   return `${y}-${m}-${day}`
 })
 
-// สตริงแสดงเวลาเรียลไทม์
 const liveTimeString = computed(() => {
   const d = now.value
   const dayName = THAI_DAY_NAMES[d.getDay()]
@@ -77,35 +113,191 @@ const liveTimeString = computed(() => {
   return `วัน${dayName}ที่ ${date} ${monthName} พ.ศ. ${thaiYear} · ${hours}:${minutes}:${seconds} น.`
 })
 
-let timerId: number | null = null
+// ปฏิทินหลักเริ่มต้นที่เดือนตุลาคม 2569 (2026) เพื่อให้ตรงกับข้อมูลระบบดาวเทียม SATOPS
+const currentYear = ref(2026)
+const currentMonth = ref(10) // 1 - 12
+const currentDay = ref(1)
 
-// อัปเดตเวลานาฬิกาเรียลไทม์ทุกวินาที
-onMounted(() => {
-  timerId = window.setInterval(() => {
-    now.value = new Date()
-  }, 1000)
+// มินิปฏิทินในแถบด้านข้าง
+const miniYear = ref(2026)
+const miniMonth = ref(10)
+
+// View modes เหมือน Google Calendar
+type ViewMode = 'month' | 'week' | 'day' | 'agenda' | 'year'
+const viewMode = ref<ViewMode>('month')
+const isSidebarOpen = ref(true)
+
+// ==========================================
+// 4. Filters (ค้นหา & หมวดหมู่ปฏิทินของฉัน)
+// ==========================================
+const searchQuery = ref('')
+const categoryFilters = ref<Record<HolidayCategory, boolean>>({
+  government: true,
+  royal: true,
+  religious: true,
+  compensatory: true,
+  special: true,
 })
 
-onUnmounted(() => {
-  if (timerId !== null) clearInterval(timerId)
-})
+const toggleAllCategories = () => {
+  const allActive = Object.values(categoryFilters.value).every(Boolean)
+  const target = !allActive
+  Object.keys(categoryFilters.value).forEach((key) => {
+    categoryFilters.value[key as HolidayCategory] = target
+  })
+}
 
-// นำทางเดือน
-const prevMonth = () => {
-  if (currentMonth.value === 1) {
-    currentMonth.value = 12
-    currentYear.value -= 1
-  } else {
-    currentMonth.value -= 1
+// หมวดหมู่วันหยุดและสีสไตล์ Google Calendar
+const CATEGORY_CONFIG: Record<
+  HolidayCategory,
+  { label: string; color: string; bgLight: string; border: string; icon: string }
+> = {
+  government: {
+    label: 'วันหยุดราชการประจำปี',
+    color: '#d93025', // Google Red
+    bgLight: '#fce8e6',
+    border: '#fad2cf',
+    icon: '🏛️'
+  },
+  royal: {
+    label: 'วันสำคัญเกี่ยวกับสถาบัน',
+    color: '#1a73e8', // Google Blue
+    bgLight: '#e8f0fe',
+    border: '#d2e3fc',
+    icon: '👑'
+  },
+  religious: {
+    label: 'วันสำคัญทางศาสนา',
+    color: '#e37400', // Google Orange / Amber
+    bgLight: '#fef7e0',
+    border: '#feefc3',
+    icon: '🪷'
+  },
+  compensatory: {
+    label: 'วันหยุดชดเชย',
+    color: '#188038', // Google Green
+    bgLight: '#e6f4ea',
+    border: '#ceead6',
+    icon: '🔄'
+  },
+  special: {
+    label: 'วันหยุดพิเศษ (มติ ครม.)',
+    color: '#a142f4', // Google Purple
+    bgLight: '#f3e8fd',
+    border: '#e9d2fd',
+    icon: '✨'
   }
 }
 
-const nextMonth = () => {
-  if (currentMonth.value === 12) {
-    currentMonth.value = 1
-    currentYear.value += 1
-  } else {
-    currentMonth.value += 1
+// ข้อมูลวันหยุดที่ผ่านการกรอง
+const filteredHolidays = computed(() => {
+  return holidaysList.value.filter((h) => {
+    if (!categoryFilters.value[h.category]) return false
+    if (searchQuery.value.trim()) {
+      const q = searchQuery.value.trim().toLowerCase()
+      const matchName = h.name.toLowerCase().includes(q)
+      const matchDesc = h.description.toLowerCase().includes(q)
+      const matchDate = h.date.includes(q)
+      if (!matchName && !matchDesc && !matchDate) return false
+    }
+    return true
+  })
+})
+
+// สถิติและจำนวนตามหมวดหมู่
+const categoryCounts = computed(() => {
+  const counts: Record<HolidayCategory, number> = {
+    government: 0,
+    royal: 0,
+    religious: 0,
+    compensatory: 0,
+    special: 0
+  }
+  holidaysList.value.forEach((h) => {
+    if (counts[h.category] !== undefined) {
+      counts[h.category]++
+    }
+  })
+  return counts
+})
+
+// หัวเรื่องช่วงเวลาปัจจุบัน (Header Display)
+const periodTitle = computed(() => {
+  if (viewMode.value === 'month') {
+    return `${THAI_MONTH_NAMES[currentMonth.value - 1]} ${currentYear.value + 543}`
+  }
+  if (viewMode.value === 'day') {
+    const d = new Date(currentYear.value, currentMonth.value - 1, currentDay.value)
+    return `วัน${THAI_DAY_NAMES[d.getDay()]}ที่ ${currentDay.value} ${THAI_MONTH_NAMES[currentMonth.value - 1]} ${currentYear.value + 543}`
+  }
+  if (viewMode.value === 'week') {
+    const cur = new Date(currentYear.value, currentMonth.value - 1, currentDay.value)
+    const start = new Date(cur)
+    start.setDate(cur.getDate() - cur.getDay())
+    const end = new Date(start)
+    end.setDate(start.getDate() + 6)
+    return `${start.getDate()} ${THAI_MONTH_SHORT[start.getMonth()]} - ${end.getDate()} ${THAI_MONTH_SHORT[end.getMonth()]} ${end.getFullYear() + 543}`
+  }
+  if (viewMode.value === 'agenda') {
+    return `กำหนดการวันหยุด ปี ${currentYear.value + 543}`
+  }
+  return `ปฏิทินวันหยุดตลอดปี ${currentYear.value + 543}`
+})
+
+// ==========================================
+// 5. Navigation Controls (Google Calendar)
+// ==========================================
+const prevPeriod = () => {
+  if (viewMode.value === 'month' || viewMode.value === 'year') {
+    if (currentMonth.value === 1) {
+      currentMonth.value = 12
+      currentYear.value -= 1
+    } else {
+      currentMonth.value -= 1
+    }
+    miniMonth.value = currentMonth.value
+    miniYear.value = currentYear.value
+  } else if (viewMode.value === 'week') {
+    const cur = new Date(currentYear.value, currentMonth.value - 1, currentDay.value)
+    cur.setDate(cur.getDate() - 7)
+    currentYear.value = cur.getFullYear()
+    currentMonth.value = cur.getMonth() + 1
+    currentDay.value = cur.getDate()
+    miniMonth.value = currentMonth.value
+    miniYear.value = currentYear.value
+  } else if (viewMode.value === 'day') {
+    const cur = new Date(currentYear.value, currentMonth.value - 1, currentDay.value)
+    cur.setDate(cur.getDate() - 1)
+    currentYear.value = cur.getFullYear()
+    currentMonth.value = cur.getMonth() + 1
+    currentDay.value = cur.getDate()
+  }
+}
+
+const nextPeriod = () => {
+  if (viewMode.value === 'month' || viewMode.value === 'year') {
+    if (currentMonth.value === 12) {
+      currentMonth.value = 1
+      currentYear.value += 1
+    } else {
+      currentMonth.value += 1
+    }
+    miniMonth.value = currentMonth.value
+    miniYear.value = currentYear.value
+  } else if (viewMode.value === 'week') {
+    const cur = new Date(currentYear.value, currentMonth.value - 1, currentDay.value)
+    cur.setDate(cur.getDate() + 7)
+    currentYear.value = cur.getFullYear()
+    currentMonth.value = cur.getMonth() + 1
+    currentDay.value = cur.getDate()
+    miniMonth.value = currentMonth.value
+    miniYear.value = currentYear.value
+  } else if (viewMode.value === 'day') {
+    const cur = new Date(currentYear.value, currentMonth.value - 1, currentDay.value)
+    cur.setDate(cur.getDate() + 1)
+    currentYear.value = cur.getFullYear()
+    currentMonth.value = cur.getMonth() + 1
+    currentDay.value = cur.getDate()
   }
 }
 
@@ -113,2219 +305,2027 @@ const goToToday = () => {
   const d = new Date()
   currentYear.value = d.getFullYear()
   currentMonth.value = d.getMonth() + 1
+  currentDay.value = d.getDate()
+  miniYear.value = currentYear.value
+  miniMonth.value = currentMonth.value
 }
 
-// วันหยุดในเดือนที่เลือก (ผ่านตัวกรองหมวดหมู่)
-const monthHolidays = computed(() => {
-  const list = getHolidaysForMonth(currentYear.value, currentMonth.value)
-  if (selectedCategory.value === 'all') return list
-  return list.filter(h => h.category === selectedCategory.value)
-})
+const jumpToDemoMonth = () => {
+  currentYear.value = 2026
+  currentMonth.value = 10
+  currentDay.value = 1
+  miniYear.value = 2026
+  miniMonth.value = 10
+}
 
-// วันหยุดทั้งหมดของปี
-const allYearHolidays = computed(() => {
-  const list = getHolidaysForYear(currentYear.value)
-  if (selectedCategory.value === 'all') return list
-  return list.filter(h => h.category === selectedCategory.value)
-})
+// ==========================================
+// 6. Calendar Grids Calculations
+// ==========================================
+interface CalendarCell {
+  date: string
+  dayNumber: number
+  month: number
+  year: number
+  isCurrentMonth: boolean
+  isToday: boolean
+  isWeekend: boolean
+  dayOfWeek: number
+  holidays: Holiday[]
+}
 
-// สถิติวันหยุดประจำเดือน
-const monthStats = computed(() => {
-  const holidays = getHolidaysForMonth(currentYear.value, currentMonth.value)
-  const totalGovHolidays = holidays.filter(h => h.isGovernmentHoliday).length
-  
-  // นับจำนวนวันเสาร์-อาทิตย์ในเดือนนั้น
-  const daysInMonth = new Date(currentYear.value, currentMonth.value, 0).getDate()
-  let weekendCount = 0
-  for (let day = 1; day <= daysInMonth; day++) {
-    const dayOfWeek = new Date(currentYear.value, currentMonth.value - 1, day).getDay()
-    if (dayOfWeek === 0 || dayOfWeek === 6) weekendCount++
-  }
-
-  // คำนวณวันหยุดถัดไปจากเดือนที่กำลังดูอยู่ หรือจากวันนี้
-  const viewDateStr = `${currentYear.value}-${String(currentMonth.value).padStart(2, '0')}-01`
-  const baseDate = viewDateStr > todayString.value ? viewDateStr : todayString.value
-  const upcoming = getUpcomingHolidays(baseDate, 1)
-  const nextHoliday = upcoming[0] || null
-
-  return {
-    totalGovHolidays,
-    weekendCount,
-    totalHolidayDays: totalGovHolidays + weekendCount,
-    daysInMonth,
-    nextHoliday
-  }
-})
-
-// คำนวณตารางวันในเดือนสำหรับปฏิทิน (Grid Days)
-const calendarGridDays = computed<DayInfo[]>(() => {
+// ตารางเดือนหลัก (Google Calendar Month Grid)
+const monthGridCells = computed<CalendarCell[]>(() => {
   const year = currentYear.value
   const month = currentMonth.value
   const daysInMonth = new Date(year, month, 0).getDate()
   const firstDayOfWeek = new Date(year, month - 1, 1).getDay() // 0 = Sunday
-  
-  // วันของเดือนก่อนหน้าเพื่อเติมช่องว่าง
   const prevMonthDays = new Date(year, month - 1, 0).getDate()
-  const cells: DayInfo[] = []
+  const cells: CalendarCell[] = []
 
   // ช่องวันจากเดือนก่อนหน้า
   for (let i = firstDayOfWeek - 1; i >= 0; i--) {
-    const dNumber = prevMonthDays - i
-    const prevMonthVal = month === 1 ? 12 : month - 1
-    const prevYearVal = month === 1 ? year - 1 : year
-    const dateStr = `${prevYearVal}-${String(prevMonthVal).padStart(2, '0')}-${String(dNumber).padStart(2, '0')}`
-    const dayOfWeek = new Date(prevYearVal, prevMonthVal - 1, dNumber).getDay()
+    const dNum = prevMonthDays - i
+    const m = month === 1 ? 12 : month - 1
+    const y = month === 1 ? year - 1 : year
+    const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`
+    const dow = new Date(y, m - 1, dNum).getDay()
     cells.push({
       date: dateStr,
-      dayNumber: dNumber,
+      dayNumber: dNum,
+      month: m,
+      year: y,
       isCurrentMonth: false,
       isToday: dateStr === todayString.value,
-      isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
-      dayOfWeek,
-      holidays: RAW_HOLIDAYS.filter(h => h.date === dateStr)
+      isWeekend: dow === 0 || dow === 6,
+      dayOfWeek: dow,
+      holidays: filteredHolidays.value.filter((h) => h.date === dateStr)
     })
   }
 
   // ช่องวันของเดือนปัจจุบัน
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    const dayOfWeek = new Date(year, month - 1, d).getDay()
+    const dow = new Date(year, month - 1, d).getDay()
     cells.push({
       date: dateStr,
       dayNumber: d,
+      month,
+      year,
       isCurrentMonth: true,
       isToday: dateStr === todayString.value,
-      isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
-      dayOfWeek,
-      holidays: RAW_HOLIDAYS.filter(h => h.date === dateStr)
+      isWeekend: dow === 0 || dow === 6,
+      dayOfWeek: dow,
+      holidays: filteredHolidays.value.filter((h) => h.date === dateStr)
     })
   }
 
-  // ช่องวันของเดือนถัดไปเพื่อให้เต็มตาราง 7 x 5 หรือ 7 x 6
-  const totalNeeded = cells.length <= 35 ? 35 : 42
-  const remaining = totalNeeded - cells.length
+  // ช่องวันของเดือนถัดไป (เติมให้เต็ม 35 หรือ 42 ช่อง)
+  const totalCells = cells.length <= 35 ? 35 : 42
+  const remaining = totalCells - cells.length
   for (let d = 1; d <= remaining; d++) {
-    const nextMonthVal = month === 12 ? 1 : month + 1
-    const nextYearVal = month === 12 ? year + 1 : year
-    const dateStr = `${nextYearVal}-${String(nextMonthVal).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    const dayOfWeek = new Date(nextYearVal, nextMonthVal - 1, d).getDay()
+    const m = month === 12 ? 1 : month + 1
+    const y = month === 12 ? year + 1 : year
+    const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    const dow = new Date(y, m - 1, d).getDay()
     cells.push({
       date: dateStr,
       dayNumber: d,
+      month: m,
+      year: y,
       isCurrentMonth: false,
       isToday: dateStr === todayString.value,
-      isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
-      dayOfWeek,
-      holidays: RAW_HOLIDAYS.filter(h => h.date === dateStr)
+      isWeekend: dow === 0 || dow === 6,
+      dayOfWeek: dow,
+      holidays: filteredHolidays.value.filter((h) => h.date === dateStr)
     })
   }
 
   return cells
 })
 
-// ป้ายหมวดหมู่ภาษาไทย
-const categoryLabel = (cat: HolidayCategory) => {
-  switch (cat) {
-    case 'government': return 'วันหยุดราชการ'
-    case 'royal': return 'วันสำคัญพระมหากษัตริย์'
-    case 'religious': return 'วันสำคัญทางศาสนา'
-    case 'compensatory': return 'วันหยุดชดเชย'
-    case 'special': return 'วันหยุดพิเศษ (มติ ครม.)'
-    default: return 'วันหยุด'
+// สัปดาห์ปัจจุบัน (Week View)
+const weekGridDays = computed<CalendarCell[]>(() => {
+  const cur = new Date(currentYear.value, currentMonth.value - 1, currentDay.value)
+  const start = new Date(cur)
+  start.setDate(cur.getDate() - cur.getDay())
+
+  const days: CalendarCell[] = []
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start)
+    d.setDate(start.getDate() + i)
+    const y = d.getFullYear()
+    const m = d.getMonth() + 1
+    const dNum = d.getDate()
+    const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`
+    const dow = d.getDay()
+    days.push({
+      date: dateStr,
+      dayNumber: dNum,
+      month: m,
+      year: y,
+      isCurrentMonth: m === currentMonth.value,
+      isToday: dateStr === todayString.value,
+      isWeekend: dow === 0 || dow === 6,
+      dayOfWeek: dow,
+      holidays: filteredHolidays.value.filter((h) => h.date === dateStr)
+    })
+  }
+  return days
+})
+
+// วันปัจจุบัน (Day View)
+const currentDayCell = computed<CalendarCell>(() => {
+  const y = currentYear.value
+  const m = currentMonth.value
+  const dNum = currentDay.value
+  const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`
+  const dow = new Date(y, m - 1, dNum).getDay()
+  return {
+    date: dateStr,
+    dayNumber: dNum,
+    month: m,
+    year: y,
+    isCurrentMonth: true,
+    isToday: dateStr === todayString.value,
+    isWeekend: dow === 0 || dow === 6,
+    dayOfWeek: dow,
+    holidays: filteredHolidays.value.filter((h) => h.date === dateStr)
+  }
+})
+
+// มินิปฏิทินข้างซ้าย (Mini Calendar)
+const miniCalendarCells = computed(() => {
+  const y = miniYear.value
+  const m = miniMonth.value
+  const daysInMonth = new Date(y, m, 0).getDate()
+  const firstDow = new Date(y, m - 1, 1).getDay()
+  const prevDays = new Date(y, m - 1, 0).getDate()
+  const list: { date: string; day: number; isCurrentMonth: boolean; hasHoliday: boolean; isSelected: boolean }[] = []
+
+  for (let i = firstDow - 1; i >= 0; i--) {
+    const dNum = prevDays - i
+    const prevM = m === 1 ? 12 : m - 1
+    const prevY = m === 1 ? y - 1 : y
+    const dStr = `${prevY}-${String(prevM).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`
+    list.push({
+      date: dStr,
+      day: dNum,
+      isCurrentMonth: false,
+      hasHoliday: holidaysList.value.some((h) => h.date === dStr),
+      isSelected: dStr === `${currentYear.value}-${String(currentMonth.value).padStart(2, '0')}-${String(currentDay.value).padStart(2, '0')}`
+    })
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    list.push({
+      date: dStr,
+      day: d,
+      isCurrentMonth: true,
+      hasHoliday: holidaysList.value.some((h) => h.date === dStr),
+      isSelected: dStr === `${currentYear.value}-${String(currentMonth.value).padStart(2, '0')}-${String(currentDay.value).padStart(2, '0')}`
+    })
+  }
+
+  const remaining = 35 - list.length > 0 ? 35 - list.length : 42 - list.length
+  for (let d = 1; d <= remaining; d++) {
+    const nextM = m === 12 ? 1 : m + 1
+    const nextY = m === 12 ? y + 1 : y
+    const dStr = `${nextY}-${String(nextM).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    list.push({
+      date: dStr,
+      day: d,
+      isCurrentMonth: false,
+      hasHoliday: holidaysList.value.some((h) => h.date === dStr),
+      isSelected: dStr === `${currentYear.value}-${String(currentMonth.value).padStart(2, '0')}-${String(currentDay.value).padStart(2, '0')}`
+    })
+  }
+
+  return list
+})
+
+const selectDateFromMini = (cell: { date: string }) => {
+  const [y, m, d] = cell.date.split('-').map(Number)
+  currentYear.value = y
+  currentMonth.value = m
+  currentDay.value = d
+}
+
+// ==========================================
+// 7. Holiday Modal & Form (เพิ่ม / แก้ไข / ลบ)
+// ==========================================
+const isModalOpen = ref(false)
+const modalMode = ref<'view' | 'create' | 'edit'>('view')
+const selectedHoliday = ref<Holiday | null>(null)
+
+const holidayForm = ref<Holiday>({
+  id: '',
+  date: '',
+  name: '',
+  nameEn: '',
+  category: 'government',
+  isGovernmentHoliday: true,
+  description: '',
+  dutyNote: '',
+  icon: '🏛️'
+})
+
+// เปิด Modal สร้างวันหยุดใหม่
+const openCreateModal = (dateStr?: string) => {
+  const targetDate =
+    dateStr ||
+    `${currentYear.value}-${String(currentMonth.value).padStart(2, '0')}-${String(currentDay.value).padStart(2, '0')}`
+
+  holidayForm.value = {
+    id: `holiday-${Date.now()}`,
+    date: targetDate,
+    name: '',
+    nameEn: '',
+    category: 'special',
+    isGovernmentHoliday: true,
+    description: '',
+    dutyNote: 'เวรประจำการเตรียมพร้อมระดับ 1 ควบคุมระบบดาวเทียม 24 ชั่วโมง',
+    icon: '✨'
+  }
+  modalMode.value = 'create'
+  isModalOpen.value = true
+}
+
+// เปิดดูรายละเอียดวันหยุด
+const openViewModal = (h: Holiday) => {
+  selectedHoliday.value = h
+  holidayForm.value = { ...h }
+  modalMode.value = 'view'
+  isModalOpen.value = true
+}
+
+// สลับไปยังโหมดแก้ไข
+const switchToEditModal = () => {
+  if (selectedHoliday.value) {
+    holidayForm.value = { ...selectedHoliday.value }
+    modalMode.value = 'edit'
   }
 }
 
-// สีหมวดหมู่
-const categoryBadgeClass = (cat: HolidayCategory) => {
-  switch (cat) {
-    case 'government': return 'badge-gov'
-    case 'royal': return 'badge-royal'
-    case 'religious': return 'badge-religious'
-    case 'compensatory': return 'badge-comp'
-    case 'special': return 'badge-special'
-    default: return 'badge-gov'
+// บันทึกวันหยุด (สร้างใหม่ หรือ บันทึกการแก้ไข)
+const handleSaveHoliday = () => {
+  if (!holidayForm.value.name.trim() || !holidayForm.value.date) {
+    alert('กรุณาระบุชื่อวันหยุดและเลือกวันที่')
+    return
+  }
+
+  if (modalMode.value === 'create') {
+    holidaysList.value.push({ ...holidayForm.value })
+  } else if (modalMode.value === 'edit') {
+    const index = holidaysList.value.findIndex((h) => h.id === holidayForm.value.id)
+    if (index !== -1) {
+      holidaysList.value[index] = { ...holidayForm.value }
+    }
+  }
+
+  saveHolidaysToStorage()
+  isModalOpen.value = false
+}
+
+// ลบวันหยุด
+const handleDeleteHoliday = (id: string) => {
+  if (confirm('คุณต้องการลบวันหยุดนี้ออกจากปฏิทินใช่หรือไม่?')) {
+    holidaysList.value = holidaysList.value.filter((h) => h.id !== id)
+    saveHolidaysToStorage()
+    isModalOpen.value = false
   }
 }
 
-// คำนวณจำนวนวันคงเหลือ (Countdown)
+// คำนวณวันคงเหลือ
 const getDaysDiff = (dateStr: string) => {
   const target = new Date(`${dateStr}T00:00:00`).getTime()
   const today = new Date(`${todayString.value}T00:00:00`).getTime()
-  const diff = Math.round((target - today) / (1000 * 60 * 60 * 24))
-  return diff
-}
-
-const openHolidayModal = (h: Holiday) => {
-  selectedHoliday.value = h
-}
-
-const openDayModal = (day: DayInfo) => {
-  selectedDay.value = day
-  if (day.holidays.length > 0) {
-    selectedHoliday.value = day.holidays[0]
-  }
-}
-
-// ฟังก์ชันเพิ่มวันหยุดพิเศษจำลอง
-const newHoliday = ref({
-  name: '',
-  date: '',
-  category: 'special' as HolidayCategory,
-  description: '',
-  dutyNote: 'เวรประจำการเตรียมพร้อมระดับ 1'
-})
-
-const addCustomHoliday = () => {
-  if (!newHoliday.value.name || !newHoliday.value.date) return
-  RAW_HOLIDAYS.push({
-    id: `custom-${Date.now()}`,
-    date: newHoliday.value.date,
-    name: newHoliday.value.name,
-    category: newHoliday.value.category,
-    isGovernmentHoliday: true,
-    description: newHoliday.value.description || 'วันหยุดราชการเพิ่มเติม',
-    dutyNote: newHoliday.value.dutyNote,
-    icon: '📌'
-  })
-  showAddModal.value = false
-  newHoliday.value = {
-    name: '',
-    date: '',
-    category: 'special',
-    description: '',
-    dutyNote: 'เวรประจำการเตรียมพร้อมระดับ 1'
-  }
+  return Math.round((target - today) / (1000 * 60 * 60 * 24))
 }
 </script>
 
 <template>
-  <div class="holiday-container">
-    <!-- แถบหัวเรื่องและเวลานาฬิกาเรียลไทม์ -->
-    <header class="holiday-header">
-      <div class="header-left">
-        <div class="live-clock-badge">
-          <span class="live-dot"></span>
-          <span class="live-text">{{ liveTimeString }}</span>
+  <div class="google-calendar-app">
+    <!-- แถบด้านบนแบบ Google Calendar (Top Navigation Bar) -->
+    <header class="gcal-topbar">
+      <div class="topbar-left">
+        <!-- ปุ่มเปิด/ปิด Sidebar (Hamburger) -->
+        <button
+          class="icon-btn hamburger-btn"
+          title="แถบเมนูหลัก"
+          aria-label="สลับแถบด้านข้าง"
+          @click="isSidebarOpen = !isSidebarOpen"
+        >
+          <span class="hamburger-line"></span>
+          <span class="hamburger-line"></span>
+          <span class="hamburger-line"></span>
+        </button>
+
+        <!-- โลโก้ปฏิทิน Google Style -->
+        <div class="gcal-brand">
+          <div class="gcal-logo-icon">
+            <span class="logo-month">ต.ค.</span>
+            <span class="logo-day">{{ currentDay }}</span>
+          </div>
+          <div class="brand-text">
+            <h2>ปฏิทินวันหยุด</h2>
+            <span class="brand-sub">{{ liveTimeString }}</span>
+          </div>
         </div>
-        <h1 class="page-title">ปฏิทินวันหยุดราชการ</h1>
-        <p class="page-desc">
-          รวบรวมวันหยุดราชการ วันสำคัญ และวันหยุดชดเชยตามประกาศสำนักนายกรัฐมนตรี สำหรับวางแผนจัดกำลังพลเวรศูนย์ปฏิบัติการดาวเทียม
-        </p>
+
+        <!-- ปุ่มวันนี้ (Today) -->
+        <button class="gcal-today-btn" @click="goToToday">วันนี้</button>
+        <button class="demo-period-btn" title="ไปที่เดือนตุลาคม 2569" @click="jumpToDemoMonth">
+          ต.ค. 2569
+        </button>
+
+        <!-- ลูกศรเลื่อนเดือน / สัปดาห์ / วัน -->
+        <div class="nav-arrows">
+          <button class="icon-btn arrow-btn" title="ก่อนหน้า" @click="prevPeriod">‹</button>
+          <button class="icon-btn arrow-btn" title="ถัดไป" @click="nextPeriod">›</button>
+        </div>
+
+        <!-- หัวเรื่องช่วงเวลา (Period Title) -->
+        <h3 class="period-title-text">{{ periodTitle }}</h3>
       </div>
 
-      <div class="header-actions">
-        <div class="view-mode-toggle">
-          <button 
-            :class="['mode-btn', { active: viewMode === 'month' }]" 
-            @click="viewMode = 'month'"
-          >
-            📅 รายเดือน
-          </button>
-          <button 
-            :class="['mode-btn', { active: viewMode === 'year' }]" 
-            @click="viewMode = 'year'"
-          >
-            📋 ทั้งปี 2569
-          </button>
+      <div class="topbar-right">
+        <!-- ช่องค้นหา Google Style -->
+        <div class="gcal-search-box">
+          <span class="search-icon">🔍</span>
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="ค้นหาวันหยุด, มติ ครม., วงรอบเวร..."
+          />
+          <button v-if="searchQuery" class="clear-search-btn" @click="searchQuery = ''">✕</button>
         </div>
 
-        <button class="btn-primary" @click="showAddModal = true">
-          <span>＋</span> เพิ่มวันหยุดพิเศษ (ครม.)
+        <!-- ตัวเลือกมุมมอง (View Switcher Dropdown) -->
+        <div class="view-switcher">
+          <select v-model="viewMode" class="gcal-view-select">
+            <option value="month">เดือน</option>
+            <option value="week">สัปดาห์</option>
+            <option value="day">วัน</option>
+            <option value="agenda">กำหนดการ</option>
+            <option value="year">ทั้งปี 2569</option>
+          </select>
+        </div>
+
+        <!-- ปุ่มสร้างวันหยุด Google FAB Style (+ สร้าง) -->
+        <button class="gcal-create-fab" @click="openCreateModal()">
+          <span class="fab-plus-icon">＋</span>
+          <span class="fab-text">สร้างวันหยุด</span>
         </button>
       </div>
     </header>
 
-    <!-- การ์ดตัวชี้วัดสถิติประจำเดือน -->
-    <section class="kpi-grid">
-      <div class="kpi-card">
-        <div class="kpi-icon icon-red">🏛️</div>
-        <div class="kpi-body">
-          <span class="kpi-label">วันหยุดราชการ (เดือน{{ THAI_MONTH_NAMES[currentMonth - 1] }})</span>
-          <strong class="kpi-value">{{ monthStats.totalGovHolidays }} <small>วัน</small></strong>
-          <span class="kpi-hint">ประกาศหยุดงานตามมติ ครม.</span>
-        </div>
-      </div>
+    <!-- พื้นที่ทำงานหลัก (Sidebar + Main Calendar View) -->
+    <div class="gcal-body-layout">
+      <!-- แถบด้านข้างซ้าย (Google Calendar Left Sidebar) -->
+      <aside v-if="isSidebarOpen" class="gcal-sidebar">
+        <!-- ปุ่ม + สร้าง ขนาดใหญ่ใน Sidebar -->
+        <button class="sidebar-big-create-btn" @click="openCreateModal()">
+          <span class="big-plus">＋</span>
+          <span>สร้างวันหยุดใหม่</span>
+        </button>
 
-      <div class="kpi-card">
-        <div class="kpi-icon icon-amber">🌴</div>
-        <div class="kpi-body">
-          <span class="kpi-label">วันหยุดสุดสัปดาห์ (ส.-อา.)</span>
-          <strong class="kpi-value">{{ monthStats.weekendCount }} <small>วัน</small></strong>
-          <span class="kpi-hint">จากทั้งหมด {{ monthStats.daysInMonth }} วันในเดือน</span>
-        </div>
-      </div>
-
-      <div class="kpi-card">
-        <div class="kpi-icon icon-blue">📊</div>
-        <div class="kpi-body">
-          <span class="kpi-label">รวมวันหยุดทั้งหมดในเดือน</span>
-          <strong class="kpi-value">{{ monthStats.totalHolidayDays }} <small>วัน</small></strong>
-          <span class="kpi-hint">{{ Math.round((monthStats.totalHolidayDays / monthStats.daysInMonth) * 100) }}% ของวันในเดือนนี้</span>
-        </div>
-      </div>
-
-      <div class="kpi-card next-holiday-card">
-        <div class="kpi-icon icon-green">⏳</div>
-        <div class="kpi-body">
-          <span class="kpi-label">วันหยุดราชการถัดไป</span>
-          <template v-if="monthStats.nextHoliday">
-            <strong class="kpi-value next-title">{{ monthStats.nextHoliday.holiday.name }}</strong>
-            <span class="kpi-hint highlight-hint">
-              📅 {{ formatShortThaiDate(monthStats.nextHoliday.holiday.date) }} 
-              <b v-if="monthStats.nextHoliday.daysLeft > 0">(อีก {{ monthStats.nextHoliday.daysLeft }} วัน)</b>
-              <b v-else-if="monthStats.nextHoliday.daysLeft === 0">(วันนี้!)</b>
+        <!-- มินิปฏิทิน (Mini Month Picker) -->
+        <div class="mini-calendar-wrap">
+          <div class="mini-header">
+            <span class="mini-month-label">
+              {{ THAI_MONTH_NAMES[miniMonth - 1] }} {{ miniYear + 543 }}
             </span>
-          </template>
-          <template v-else>
-            <strong class="kpi-value">ไม่มีวันหยุดใกล้เคียง</strong>
-            <span class="kpi-hint">ช่วงเวลานี้เป็นวันปฏิบัติงานปกติ</span>
-          </template>
-        </div>
-      </div>
-    </section>
-
-    <!-- มุมมองแบบรายเดือน (Monthly Calendar View) -->
-    <template v-if="viewMode === 'month'">
-      <div :class="['calendar-workspace', { 'sidebar-collapsed': !isSidebarOpen }]">
-        <!-- ฝั่งซ้าย: ตารางปฏิทินแบบเรียลไทม์ -->
-        <div class="calendar-main-card">
-          <!-- แถบควบคุมเดือนและปี + ปุ่มเลื่อนปิดเปิดแถบขวา -->
-          <div class="month-navigation-bar">
-            <div class="nav-cluster">
-              <button class="nav-arrow-btn" aria-label="เดือนก่อนหน้า" title="เดือนก่อนหน้า" @click="prevMonth">‹</button>
-              <div class="current-month-display">
-                <h2>{{ THAI_MONTH_NAMES[currentMonth - 1] }}</h2>
-              </div>
-              <button class="nav-arrow-btn" aria-label="เดือนถัดไป" title="เดือนถัดไป" @click="nextMonth">›</button>
-              <button class="today-shortcut-btn" title="กลับมาเดือนและวันปัจจุบัน" @click="goToToday">
-                <span class="today-dot"></span> วันนี้
-              </button>
-            </div>
-
-            <div class="month-actions-right">
-              <!-- ตัวเลือกปีแบบ Dropdown -->
-              <div class="year-dropdown-wrap">
-                <select v-model="currentYear" class="year-select">
-                  <option :value="2025">พ.ศ. 2568 (2025)</option>
-                  <option :value="2026">พ.ศ. 2569 (2026) · ปัจจุบัน</option>
-                  <option :value="2027">พ.ศ. 2570 (2027)</option>
-                </select>
-              </div>
-
-              <!-- ปุ่มเลื่อนปิด-เปิดบาร์ไฮไลต์ทางขวา -->
-              <button 
-                class="sidebar-toggle-btn"
-                :class="{ 'btn-active': !isSidebarOpen }"
-                :title="isSidebarOpen ? 'ย่อ/ซ่อนแถบไฮไลต์ทางขวา' : 'เปิดแสดงแถบไฮไลต์ทางขวา'"
-                @click="toggleSidebar"
+            <div class="mini-nav">
+              <button
+                class="mini-nav-btn"
+                @click="
+                  miniMonth === 1 ? ((miniMonth = 12), miniYear--) : miniMonth--
+                "
               >
-                <span class="toggle-icon">{{ isSidebarOpen ? '⇥' : '⇤' }}</span>
-                <span>{{ isSidebarOpen ? 'ซ่อนไฮไลต์' : 'เปิดไฮไลต์ (' + monthHolidays.length + ')' }}</span>
+                ‹
+              </button>
+              <button
+                class="mini-nav-btn"
+                @click="
+                  miniMonth === 12 ? ((miniMonth = 1), miniYear++) : miniMonth++
+                "
+              >
+                ›
               </button>
             </div>
           </div>
 
-          <!-- แถบเลือกเดือนด่วน 12 เดือน (Month Quick Bar) สะดวก สบายตา ไม่รก -->
-          <div class="month-quick-bar">
-            <button 
-              v-for="(mShort, idx) in THAI_MONTH_SHORT" 
-              :key="mShort"
-              :class="['month-tab', { active: currentMonth === idx + 1 }]"
-              @click="currentMonth = idx + 1"
+          <div class="mini-grid">
+            <div
+              v-for="dow in ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส']"
+              :key="dow"
+              class="mini-dow"
             >
-              <span>{{ mShort }}</span>
-              <span v-if="hasHolidayInMonth(currentYear, idx + 1)" class="month-tab-dot" title="มีวันหยุดราชการในเดือนนี้"></span>
-            </button>
-          </div>
-
-          <!-- ตัวกรองประเภทวันหยุด -->
-          <div class="category-filters-bar">
-            <button 
-              :class="['filter-chip', { active: selectedCategory === 'all' }]"
-              @click="selectedCategory = 'all'"
+              {{ dow }}
+            </div>
+            <button
+              v-for="cell in miniCalendarCells"
+              :key="cell.date"
+              :class="[
+                'mini-day-cell',
+                {
+                  'other-month': !cell.isCurrentMonth,
+                  'has-event': cell.hasHoliday,
+                  selected: cell.isSelected
+                }
+              ]"
+              @click="selectDateFromMini(cell)"
             >
-              ทั้งหมด
-              <span v-if="getHolidaysForMonth(currentYear, currentMonth).length > 0" class="chip-count">
-                {{ getHolidaysForMonth(currentYear, currentMonth).length }}
-              </span>
+              {{ cell.day }}
             </button>
-            <button 
-              :class="['filter-chip chip-gov', { active: selectedCategory === 'government' }]"
-              @click="selectedCategory = 'government'"
-            >
-              🏛️ วันหยุดราชการ
-            </button>
-            <button 
-              :class="['filter-chip chip-royal', { active: selectedCategory === 'royal' }]"
-              @click="selectedCategory = 'royal'"
-            >
-              👑 สถาบันพระมหากษัตริย์
-            </button>
-            <button 
-              :class="['filter-chip chip-religious', { active: selectedCategory === 'religious' }]"
-              @click="selectedCategory = 'religious'"
-            >
-              🪷 วันสำคัญทางศาสนา
-            </button>
-            <button 
-              :class="['filter-chip chip-comp', { active: selectedCategory === 'compensatory' }]"
-              @click="selectedCategory = 'compensatory'"
-            >
-              🔄 วันหยุดชดเชย
-            </button>
-          </div>
-
-          <!-- ตารางปฏิทิน 7 คอลัมน์ ขนาดเท่ากันทุกคอลัมน์ -->
-          <div class="calendar-grid-container">
-            <!-- แถวชื่อวันในสัปดาห์ -->
-            <div class="weekday-header-row">
-              <div 
-                v-for="(dayName, idx) in THAI_DAY_SHORT" 
-                :key="dayName"
-                :class="['weekday-col', { 'col-sunday': idx === 0, 'col-saturday': idx === 6 }]"
-              >
-                <span>{{ dayName }}</span>
-              </div>
-            </div>
-
-            <!-- ช่องวันของเดือน -->
-            <div class="calendar-days-grid">
-              <div
-                v-for="cell in calendarGridDays"
-                :key="cell.date"
-                :class="[
-                  'day-card',
-                  {
-                    'other-month': !cell.isCurrentMonth,
-                    'is-today': cell.isToday,
-                    'is-weekend': cell.isWeekend,
-                    'has-holiday': cell.isCurrentMonth && cell.holidays.length > 0
-                  }
-                ]"
-                @click="openDayModal(cell)"
-              >
-                <div class="day-card-top">
-                  <span class="day-number">{{ cell.dayNumber }}</span>
-                  <span v-if="cell.isToday" class="today-tag">วันนี้</span>
-                </div>
-
-                <!-- แสดงแท็กวันหยุดในช่อง เฉพาะเดือนปัจจุบัน ป้องกันข้อความยาวดันคอลัมน์ยืด -->
-                <div v-if="cell.isCurrentMonth && cell.holidays.length > 0" class="day-holiday-chips">
-                  <div
-                    v-for="h in cell.holidays"
-                    :key="h.id"
-                    :class="['holiday-pill', categoryBadgeClass(h.category)]"
-                    :title="h.name"
-                    @click.stop="openHolidayModal(h)"
-                  >
-                    <span class="pill-icon">{{ h.icon || '📌' }}</span>
-                    <span class="pill-text">{{ h.name }}</span>
-                  </div>
-                </div>
-
-                <!-- วันหยุดของเดือนติดกัน แสดงเป็นจุดเล็กๆ สุภาพ ไม่ดันความกว้างของช่อง -->
-                <div v-else-if="!cell.isCurrentMonth && cell.holidays.length > 0" class="other-month-dot-wrap">
-                  <span class="other-dot" :title="cell.holidays[0].name"></span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- แถบคำอธิบายสัญลักษณ์ (Legend) -->
-          <footer class="calendar-legend-bar">
-            <span class="legend-title">สัญลักษณ์:</span>
-            <div class="legend-item"><span class="legend-sample bg-gov"></span> วันหยุดราชการประจำปี</div>
-            <div class="legend-item"><span class="legend-sample bg-royal"></span> วันสำคัญเกี่ยวกับสถาบัน</div>
-            <div class="legend-item"><span class="legend-sample bg-religious"></span> วันสำคัญทางศาสนา</div>
-            <div class="legend-item"><span class="legend-sample bg-comp"></span> วันหยุดชดเชย</div>
-            <div class="legend-item"><span class="legend-sample bg-today-sample"></span> วันนี้</div>
-            <div class="legend-item"><span class="legend-sample bg-weekend-sample"></span> วันหยุดเสาร์-อาทิตย์</div>
-          </footer>
-        </div>
-
-        <!-- ฝั่งขวา: พาเนลไฮไลต์วันหยุดประจำเดือน (Monthly Highlights - เลื่อนปิด/เปิดได้) -->
-        <aside v-if="isSidebarOpen" class="month-highlights-panel">
-          <div class="panel-top-banner">
-            <div class="banner-title-group">
-              <span class="banner-sparkle">✦</span>
-              <div>
-                <h3 class="panel-heading">ไฮไลต์วันหยุดประจำเดือน</h3>
-                <p class="panel-subheading">{{ THAI_MONTH_NAMES[currentMonth - 1] }} {{ currentYear + 543 }}</p>
-              </div>
-            </div>
-            <div class="banner-actions-group">
-              <span class="highlight-count-badge">
-                {{ monthHolidays.length }} รายการ
-              </span>
-              <button class="panel-close-btn" title="ซ่อนแถบไฮไลต์" @click="isSidebarOpen = false">✕</button>
-            </div>
-          </div>
-
-          <!-- รายการการ์ดวันหยุดของเดือนนี้ -->
-          <div class="highlights-list">
-            <template v-if="monthHolidays.length > 0">
-              <article
-                v-for="item in monthHolidays"
-                :key="item.id"
-                class="highlight-card"
-                @click="openHolidayModal(item)"
-              >
-                <div class="card-date-badge">
-                  <span class="badge-day">{{ item.date.split('-')[2] }}</span>
-                  <span class="badge-month">{{ THAI_MONTH_SHORT[Number(item.date.split('-')[1]) - 1] }}</span>
-                  <span class="badge-weekday">{{ THAI_DAY_SHORT[new Date(item.date).getDay()] }}</span>
-                </div>
-
-                <div class="card-content">
-                  <div class="card-meta">
-                    <span :class="['category-pill', categoryBadgeClass(item.category)]">
-                      {{ categoryLabel(item.category) }}
-                    </span>
-                    
-                    <!-- ตัวนับถอยหลัง -->
-                    <span 
-                      v-if="getDaysDiff(item.date) > 0" 
-                      class="countdown-chip upcoming"
-                    >
-                      อีก {{ getDaysDiff(item.date) }} วัน
-                    </span>
-                    <span 
-                      v-else-if="getDaysDiff(item.date) === 0" 
-                      class="countdown-chip today"
-                    >
-                      วันนี้!
-                    </span>
-                    <span 
-                      v-else 
-                      class="countdown-chip past"
-                    >
-                      ผ่านมาแล้ว
-                    </span>
-                  </div>
-
-                  <h4 class="holiday-title">
-                    <span class="holiday-icon">{{ item.icon }}</span> {{ item.name }}
-                  </h4>
-
-                  <p class="holiday-desc">{{ item.description }}</p>
-
-                  <div class="satops-duty-note">
-                    <span class="note-bullet">⚡ คำสั่งเวร SATOPS:</span>
-                    <span class="note-text">{{ item.dutyNote || 'จัดกำลังพลเวร 3 ผลัด ปฏิบัติหน้าที่ตรวจติดตามสัญญาณดาวเทียมตลอด 24 ชม.' }}</span>
-                  </div>
-
-                  <!-- เชื่อมโยงข้อมูลกำลังพลเข้าเวรจริงจากระบบ (Connected Duty Data) -->
-                  <div v-if="getDutyForDate(item.date)?.md" class="duty-roster-box">
-                    <div class="roster-header">🛡️ กำลังพลเข้าเวรวันหยุดนี้:</div>
-                    <div class="roster-chips">
-                      <span class="roster-chip md"><b>MD:</b> {{ getDutyForDate(item.date)?.md }}</span>
-                      <span class="roster-chip fmo"><b>FMO:</b> {{ getDutyForDate(item.date)?.fmo }}</span>
-                      <span class="roster-chip gso"><b>GSO:</b> {{ getDutyForDate(item.date)?.gso }}</span>
-                    </div>
-                  </div>
-                </div>
-              </article>
-            </template>
-
-            <!-- กรณีไม่มีวันหยุดราชการในเดือนนั้น -->
-            <div v-else class="empty-holidays-state">
-              <div class="empty-icon">🌱</div>
-              <h4>เดือนนี้ไม่มีวันหยุดราชการ</h4>
-              <p>ปฏิบัติงานตามวันและเวลาปกติ (วันจันทร์ - ศุกร์) โดยมีเฉพาะวันหยุดเสาร์-อาทิตย์ {{ monthStats.weekendCount }} วัน</p>
-              <button class="btn-secondary-sm" @click="nextMonth">
-                ดูวันหยุดเดือนถัดไป ➔
-              </button>
-            </div>
-          </div>
-
-          <!-- ตัวอย่างวันหยุดในเดือนถัดไป (Sneak Peek) -->
-          <div class="next-month-peek">
-            <h5 class="peek-title">วันหยุดที่กำลังจะมาถึงเร็วๆ นี้</h5>
-            <div class="peek-list">
-              <div 
-                v-for="peek in getUpcomingHolidays(todayString, 3)" 
-                :key="peek.holiday.id" 
-                class="peek-item"
-                @click="openHolidayModal(peek.holiday)"
-              >
-                <div class="peek-date">{{ formatShortThaiDate(peek.holiday.date) }}</div>
-                <div class="peek-name">{{ peek.holiday.name }}</div>
-                <div class="peek-days">
-                  <span v-if="peek.daysLeft > 0">อีก {{ peek.daysLeft }} วัน</span>
-                  <span v-else-if="peek.daysLeft === 0" class="today-text">วันนี้</span>
-                  <span v-else>ผ่านมาแล้ว</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </aside>
-      </div>
-    </template>
-
-    <!-- มุมมองแบบรายการทั้งปี (Annual List View) -->
-    <template v-else>
-      <div class="annual-view-card">
-        <div class="annual-toolbar">
-          <h3>ตารางวันหยุดราชการประจำปี พ.ศ. {{ currentYear + 543 }} ({{ currentYear }})</h3>
-          <span class="annual-total-badge">รวม {{ allYearHolidays.length }} วันหยุดตามประกาศ</span>
-        </div>
-
-        <div class="annual-table-wrap">
-          <table class="annual-table">
-            <thead>
-              <tr>
-                <th style="width: 140px;">วันที่</th>
-                <th style="width: 110px;">วันในสัปดาห์</th>
-                <th>ชื่อวันหยุดราชการ</th>
-                <th style="width: 180px;">ประเภท</th>
-                <th>คำอธิบายความสำคัญ</th>
-                <th>การจัดเวร SATOPS</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr 
-                v-for="h in allYearHolidays" 
-                :key="h.id"
-                :class="{ 'row-today': h.date === todayString }"
-                @click="openHolidayModal(h)"
-              >
-                <td class="date-cell-bold">{{ formatShortThaiDate(h.date) }}</td>
-                <td>{{ THAI_DAY_NAMES[new Date(h.date).getDay()] }}</td>
-                <td class="holiday-name-cell">
-                  <span class="table-icon">{{ h.icon }}</span>
-                  <b>{{ h.name }}</b>
-                </td>
-                <td>
-                  <span :class="['category-pill', categoryBadgeClass(h.category)]">
-                    {{ categoryLabel(h.category) }}
-                  </span>
-                </td>
-                <td class="desc-cell">{{ h.description }}</td>
-                <td class="duty-cell">{{ h.dutyNote || 'ผลัดเวรพิเศษ 24 ชม.' }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </template>
-
-    <!-- Modal รายละเอียดวันหยุด -->
-    <div v-if="selectedHoliday" class="modal-backdrop" @click.self="selectedHoliday = null">
-      <section class="holiday-detail-modal">
-        <button class="modal-close-btn" @click="selectedHoliday = null">×</button>
-        <div class="modal-badge-row">
-          <span :class="['category-pill', categoryBadgeClass(selectedHoliday.category)]">
-            {{ categoryLabel(selectedHoliday.category) }}
-          </span>
-          <span v-if="selectedHoliday.isGovernmentHoliday" class="status-official">
-            ✓ วันหยุดราชการอย่างเป็นทางการ
-          </span>
-        </div>
-
-        <div class="modal-icon-header">
-          <span class="huge-icon">{{ selectedHoliday.icon || '🏛️' }}</span>
-          <div>
-            <h2 class="modal-holiday-title">{{ selectedHoliday.name }}</h2>
-            <p v-if="selectedHoliday.nameEn" class="modal-holiday-en">{{ selectedHoliday.nameEn }}</p>
           </div>
         </div>
 
-        <div class="modal-info-box">
-          <div class="info-row">
-            <span class="info-label">📅 วันที่:</span>
-            <strong class="info-val">{{ formatFullThaiDate(selectedHoliday.date) }}</strong>
+        <!-- ส่วนตัวกรอง "ปฏิทินของฉัน" (My Calendars) -->
+        <div class="sidebar-section">
+          <div class="sidebar-section-header">
+            <h4>ปฏิทินวันหยุด (หมวดหมู่)</h4>
+            <button class="text-link-btn" @click="toggleAllCategories">
+              {{ Object.values(categoryFilters).every(Boolean) ? 'ล้าง' : 'เลือกหมด' }}
+            </button>
           </div>
-          <div class="info-row">
-            <span class="info-label">⏳ สถานะ:</span>
-            <span class="info-val">
-              <template v-if="getDaysDiff(selectedHoliday.date) > 0">
-                เหลืออีก <b>{{ getDaysDiff(selectedHoliday.date) }}</b> วัน
-              </template>
-              <template v-else-if="getDaysDiff(selectedHoliday.date) === 0">
-                <b class="today-text">🎉 วันนี้คือวันหยุด!</b>
-              </template>
-              <template v-else>
-                ผ่านมาแล้ว {{ Math.abs(getDaysDiff(selectedHoliday.date)) }} วัน
-              </template>
-            </span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">📖 รายละเอียด:</span>
-            <p class="info-desc">{{ selectedHoliday.description }}</p>
+
+          <div class="category-checkbox-list">
+            <label
+              v-for="(cfg, catKey) in CATEGORY_CONFIG"
+              :key="catKey"
+              class="category-checkbox-item"
+            >
+              <input
+                v-model="categoryFilters[catKey as HolidayCategory]"
+                type="checkbox"
+                class="gcal-checkbox"
+                :style="{ accentColor: cfg.color }"
+              />
+              <span class="cat-color-badge" :style="{ backgroundColor: cfg.color }"></span>
+              <span class="cat-label-text">{{ cfg.label }}</span>
+              <span class="cat-count-badge">{{ categoryCounts[catKey as HolidayCategory] }}</span>
+            </label>
           </div>
         </div>
 
-        <div class="modal-satops-box">
-          <div class="satops-box-header">
-            <span>📡 ระเบียบการเข้าเวรสถานีควบคุมดาวเทียม (SATOPS)</span>
-          </div>
-          <p class="satops-box-body">
-            {{ selectedHoliday.dutyNote || 'วันหยุดราชการ: กำหนดให้เจ้าหน้าที่ชุดเวรประจำสถานีผลัดละ 3 นาย (MD, FMO, GSO) ปฏิบัติงานต่อเนื่องตลอด 24 ชั่วโมงตามคำสั่งศูนย์ควบคุม พร้อมบันทึก Logbook ครบถ้วน' }}
+        <!-- การ์ดสถานะ SATOPS & ปุ่มรีเซ็ตข้อมูล -->
+        <div class="sidebar-section satops-info-box">
+          <div class="satops-badge">🛰️ SATOPS SYSTEM</div>
+          <p class="satops-desc">
+            ข้อมูลวันหยุดทำงานแบบแยกส่วนอิสระ (Standalone) รองรับการเพิ่ม แก้ไข และบันทึกใน Local Storage
           </p>
+          <button class="btn-reset-defaults" @click="resetHolidaysToDefault">
+            🔄 รีเซ็ตวันหยุดตามประกาศทางการ
+          </button>
         </div>
+      </aside>
 
-        <!-- รายชื่อผู้เข้าเวรในวันหยุดนี้จากตารางจริง -->
-        <div v-if="getDutyForDate(selectedHoliday.date)?.md" class="modal-roster-box">
-          <div class="roster-box-title">🛡️ กำลังพลประจำเวรในวันหยุดนี้ (เชื่อมโยงจากตารางเวร):</div>
-          <div class="roster-box-grid">
-            <div class="roster-item-card">
-              <span class="role-badge-sm md">MD</span>
-              <div class="officer-name">{{ getDutyForDate(selectedHoliday.date)?.md }}</div>
+      <!-- ส่วนตารางปฏิทินหลัก (Main View Container) -->
+      <main class="gcal-main-content">
+        <!-- 1. MONTH VIEW (มุมมองแบบเดือน Google Calendar) -->
+        <div v-if="viewMode === 'month'" class="month-view-container">
+          <!-- แถวหัวคอลัมน์ชื่อวัน (Sun - Sat) -->
+          <div class="month-header-row">
+            <div
+              v-for="(dayName, idx) in ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์']"
+              :key="dayName"
+              :class="['month-dow-header', { 'is-weekend': idx === 0 || idx === 6 }]"
+            >
+              <span class="dow-full">{{ dayName }}</span>
+              <span class="dow-short">{{ THAI_DAY_SHORT[idx] }}</span>
             </div>
-            <div class="roster-item-card">
-              <span class="role-badge-sm fmo">FMO</span>
-              <div class="officer-name">{{ getDutyForDate(selectedHoliday.date)?.fmo }}</div>
-            </div>
-            <div class="roster-item-card">
-              <span class="role-badge-sm gso">GSO</span>
-              <div class="officer-name">{{ getDutyForDate(selectedHoliday.date)?.gso }}</div>
+          </div>
+
+          <!-- ตารางวัน 7 คอลัมน์ (Google Month Grid) -->
+          <div class="month-cells-grid">
+            <div
+              v-for="cell in monthGridCells"
+              :key="cell.date"
+              :class="[
+                'gcal-month-cell',
+                {
+                  'not-current-month': !cell.isCurrentMonth,
+                  'is-today': cell.isToday,
+                  'is-weekend': cell.isWeekend
+                }
+              ]"
+              @click="openCreateModal(cell.date)"
+            >
+              <div class="cell-top-bar">
+                <span :class="['date-number-bubble', { 'today-bubble': cell.isToday }]">
+                  {{ cell.dayNumber }}
+                </span>
+                <span class="cell-quick-add" title="คลิกเพื่อเพิ่มวันหยุดในวันนี้">＋</span>
+              </div>
+
+              <!-- รายการ Event Pills ในช่องวัน -->
+              <div class="cell-events-list">
+                <div
+                  v-for="h in cell.holidays"
+                  :key="h.id"
+                  class="gcal-event-pill"
+                  :style="{
+                    backgroundColor: CATEGORY_CONFIG[h.category].bgLight,
+                    borderLeft: `4px solid ${CATEGORY_CONFIG[h.category].color}`,
+                    color: CATEGORY_CONFIG[h.category].color
+                  }"
+                  :title="`${h.name} (${CATEGORY_CONFIG[h.category].label})`"
+                  @click.stop="openViewModal(h)"
+                >
+                  <span class="pill-emoji">{{ h.icon || CATEGORY_CONFIG[h.category].icon }}</span>
+                  <span class="pill-name">{{ h.name }}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="modal-footer-actions">
-          <button class="btn-secondary" @click="selectedHoliday = null">ปิดหน้าต่าง</button>
+        <!-- 2. WEEK VIEW (มุมมองแบบสัปดาห์) -->
+        <div v-else-if="viewMode === 'week'" class="week-view-container">
+          <div class="week-header-row">
+            <div
+              v-for="day in weekGridDays"
+              :key="day.date"
+              :class="['week-col-header', { 'is-today': day.isToday }]"
+            >
+              <span class="week-dow">{{ THAI_DAY_SHORT[day.dayOfWeek] }}</span>
+              <span :class="['week-daynum', { 'today-bubble': day.isToday }]">
+                {{ day.dayNumber }}
+              </span>
+            </div>
+          </div>
+
+          <div class="week-body-columns">
+            <div
+              v-for="day in weekGridDays"
+              :key="day.date"
+              class="week-day-column"
+              @click="openCreateModal(day.date)"
+            >
+              <div class="col-add-prompt">＋ เพิ่มวันหยุด</div>
+              <div class="week-column-events">
+                <div
+                  v-for="h in day.holidays"
+                  :key="h.id"
+                  class="week-event-card"
+                  :style="{
+                    borderLeft: `5px solid ${CATEGORY_CONFIG[h.category].color}`,
+                    backgroundColor: CATEGORY_CONFIG[h.category].bgLight
+                  }"
+                  @click.stop="openViewModal(h)"
+                >
+                  <div class="card-head">
+                    <span class="card-emoji">{{ h.icon || '🏛️' }}</span>
+                    <strong :style="{ color: CATEGORY_CONFIG[h.category].color }">{{ h.name }}</strong>
+                  </div>
+                  <p class="card-desc">{{ h.description }}</p>
+                  <div class="card-meta">
+                    <span class="card-cat-badge">{{ CATEGORY_CONFIG[h.category].label }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-      </section>
+
+        <!-- 3. DAY VIEW (มุมมองแบบวันเดี่ยว) -->
+        <div v-else-if="viewMode === 'day'" class="day-view-container">
+          <div class="day-view-header-card">
+            <div class="day-title-info">
+              <h2>{{ formatFullThaiDate(currentDayCell.date) }}</h2>
+              <p v-if="currentDayCell.isWeekend" class="text-amber">วันหยุดสุดสัปดาห์ (เสาร์-อาทิตย์)</p>
+              <p v-else class="text-green">วันทำงานปกติ</p>
+            </div>
+            <button class="btn-primary" @click="openCreateModal(currentDayCell.date)">
+              ＋ เพิ่มวันหยุดในวันนี้
+            </button>
+          </div>
+
+          <div class="day-events-panel">
+            <div v-if="currentDayCell.holidays.length === 0" class="empty-day-state">
+              <div class="empty-icon">🗓️</div>
+              <h3>ไม่มีวันหยุดราชการหรือกิจกรรมพิเศษในวันนี้</h3>
+              <p>สามารถคลิกปุ่มด้านบนเพื่อเพิ่มวันหยุดหรือกิจกรรมใหม่ได้ตลอดเวลา</p>
+            </div>
+
+            <div
+              v-for="h in currentDayCell.holidays"
+              :key="h.id"
+              class="day-detailed-card"
+              :style="{ borderLeft: `6px solid ${CATEGORY_CONFIG[h.category].color}` }"
+            >
+              <div class="detailed-header">
+                <div class="detailed-title-wrap">
+                  <span class="detailed-icon">{{ h.icon || '🏛️' }}</span>
+                  <div>
+                    <h3>{{ h.name }}</h3>
+                    <span v-if="h.nameEn" class="text-muted">{{ h.nameEn }}</span>
+                  </div>
+                </div>
+                <div class="detailed-actions">
+                  <button class="btn-edit-sm" @click="openViewModal(h); switchToEditModal()">
+                    ✏️ แก้ไข
+                  </button>
+                  <button class="btn-delete-sm" @click="handleDeleteHoliday(h.id)">
+                    🗑️ ลบ
+                  </button>
+                </div>
+              </div>
+
+              <div class="detailed-body">
+                <div class="detailed-row">
+                  <span class="row-label">หมวดหมู่:</span>
+                  <span
+                    class="badge-pill"
+                    :style="{
+                      backgroundColor: CATEGORY_CONFIG[h.category].bgLight,
+                      color: CATEGORY_CONFIG[h.category].color
+                    }"
+                  >
+                    {{ CATEGORY_CONFIG[h.category].label }}
+                  </span>
+                </div>
+
+                <div class="detailed-row">
+                  <span class="row-label">สถานะวันหยุด:</span>
+                  <span>{{ h.isGovernmentHoliday ? '✓ หยุดราชการตามประกาศสำนักนายกฯ' : 'วันสำคัญ (ไม่หยุดทำการ)' }}</span>
+                </div>
+
+                <div class="detailed-row">
+                  <span class="row-label">ประวัติ / รายละเอียด:</span>
+                  <p>{{ h.description }}</p>
+                </div>
+
+                <div class="satops-duty-box">
+                  <strong>⚡ ระเบียบคำสั่งเวร SATOPS:</strong>
+                  <p>{{ h.dutyNote || 'จัดเจ้าหน้าที่เวรปฏิบัติงาน 24 ชั่วโมงตามระเบียบ' }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. AGENDA VIEW (มุมมองกำหนดการ) -->
+        <div v-else-if="viewMode === 'agenda'" class="agenda-view-container">
+          <div class="agenda-header-banner">
+            <div>
+              <h3>รายการวันหยุดราชการและวันสำคัญ (กำหนดการ)</h3>
+              <p>พบทั้งหมด {{ filteredHolidays.length }} รายการตามตัวกรองที่เลือก</p>
+            </div>
+            <button class="btn-primary" @click="openCreateModal()">
+              ＋ เพิ่มวันหยุด
+            </button>
+          </div>
+
+          <div class="agenda-list">
+            <div
+              v-for="h in filteredHolidays"
+              :key="h.id"
+              class="agenda-item-card"
+              @click="openViewModal(h)"
+            >
+              <div class="agenda-date-col">
+                <span class="agenda-day">{{ h.date.split('-')[2] }}</span>
+                <span class="agenda-month">{{ THAI_MONTH_SHORT[Number(h.date.split('-')[1]) - 1] }}</span>
+                <span class="agenda-dow">{{ THAI_DAY_SHORT[new Date(h.date).getDay()] }}</span>
+              </div>
+
+              <div class="agenda-content-col">
+                <div class="agenda-title-line">
+                  <span class="agenda-icon">{{ h.icon || '🏛️' }}</span>
+                  <strong>{{ h.name }}</strong>
+                  <span
+                    class="cat-chip"
+                    :style="{
+                      backgroundColor: CATEGORY_CONFIG[h.category].bgLight,
+                      color: CATEGORY_CONFIG[h.category].color
+                    }"
+                  >
+                    {{ CATEGORY_CONFIG[h.category].label }}
+                  </span>
+                </div>
+                <p class="agenda-desc">{{ h.description }}</p>
+              </div>
+
+              <div class="agenda-action-col">
+                <span
+                  v-if="getDaysDiff(h.date) > 0"
+                  class="countdown-tag"
+                >
+                  อีก {{ getDaysDiff(h.date) }} วัน
+                </span>
+                <span
+                  v-else-if="getDaysDiff(h.date) === 0"
+                  class="countdown-tag today"
+                >
+                  วันนี้!
+                </span>
+                <button
+                  class="btn-icon-more"
+                  title="แก้ไขหรือลบ"
+                  @click.stop="openViewModal(h)"
+                >
+                  ⋮
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. YEAR VIEW (มุมมองทั้งปี) -->
+        <div v-else class="year-view-container">
+          <div class="year-header-banner">
+            <div>
+              <h3>ปฏิทินวันหยุดตลอดปี พ.ศ. {{ currentYear + 543 }} ({{ currentYear }})</h3>
+              <p>แสดงวันหยุดทั้งหมดตามประกาศราชการและมติ ครม. สามารถคลิกรายการเพื่อแก้ไขได้</p>
+            </div>
+            <button class="btn-primary" @click="openCreateModal()">
+              ＋ เพิ่มวันหยุดใหม่
+            </button>
+          </div>
+
+          <div class="year-table-wrap">
+            <table class="year-table">
+              <thead>
+                <tr>
+                  <th style="width: 140px">วันที่</th>
+                  <th style="width: 90px">วัน</th>
+                  <th>ชื่อวันหยุดราชการ</th>
+                  <th style="width: 180px">หมวดหมู่</th>
+                  <th>รายละเอียดความสำคัญ</th>
+                  <th style="width: 130px; text-align: right">การดำเนินการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="h in filteredHolidays"
+                  :key="h.id"
+                  class="year-table-row"
+                  @click="openViewModal(h)"
+                >
+                  <td class="date-cell">
+                    <b>{{ formatShortThaiDate(h.date) }}</b>
+                  </td>
+                  <td>{{ THAI_DAY_SHORT[new Date(h.date).getDay()] }}</td>
+                  <td>
+                    <span class="table-icon">{{ h.icon }}</span>
+                    <strong>{{ h.name }}</strong>
+                  </td>
+                  <td>
+                    <span
+                      class="cat-chip"
+                      :style="{
+                        backgroundColor: CATEGORY_CONFIG[h.category].bgLight,
+                        color: CATEGORY_CONFIG[h.category].color
+                      }"
+                    >
+                      {{ CATEGORY_CONFIG[h.category].label }}
+                    </span>
+                  </td>
+                  <td class="desc-cell">{{ h.description }}</td>
+                  <td class="action-cell">
+                    <button
+                      class="btn-row-action"
+                      title="แก้ไข"
+                      @click.stop="openViewModal(h); switchToEditModal()"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      class="btn-row-action delete"
+                      title="ลบ"
+                      @click.stop="handleDeleteHoliday(h.id)"
+                    >
+                      🗑️
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
     </div>
 
-    <!-- Modal เพิ่มวันหยุดพิเศษ (มติ ครม.) -->
-    <div v-if="showAddModal" class="modal-backdrop" @click.self="showAddModal = false">
-      <section class="add-holiday-modal">
-        <button class="modal-close-btn" @click="showAddModal = false">×</button>
-        <span class="eyebrow-text">มติคณะรัฐมนตรี / ประกาศพิเศษ</span>
-        <h2 class="modal-title">เพิ่มวันหยุดราชการพิเศษ</h2>
-        <p class="modal-subtitle">บันทึกวันหยุดเพิ่มเติมตามประกาศของรัฐบาลเพื่อปรับตารางเวรให้ถูกต้อง</p>
-
-        <form @submit.prevent="addCustomHoliday" class="add-form">
-          <div class="form-group">
-            <label>ชื่อวันหยุดราชการ *</label>
-            <input 
-              v-model="newHoliday.name" 
-              type="text" 
-              placeholder="เช่น วันหยุดราชการกรณีพิเศษช่วงเทศกาล..." 
-              required
-            />
-          </div>
-
-          <div class="form-row-2">
-            <div class="form-group">
-              <label>วันที่ *</label>
-              <input 
-                v-model="newHoliday.date" 
-                type="date" 
-                required 
-              />
-            </div>
-            <div class="form-group">
-              <label>ประเภทวันหยุด</label>
-              <select v-model="newHoliday.category">
-                <option value="special">วันหยุดราชการกรณีพิเศษ (มติ ครม.)</option>
-                <option value="compensatory">วันหยุดชดเชย</option>
-                <option value="government">วันหยุดราชการประจำปี</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label>คำอธิบายความสำคัญ</label>
-            <textarea 
-              v-model="newHoliday.description" 
-              rows="2" 
-              placeholder="ระบุที่มาหรือรายละเอียดมติ ครม."
-            ></textarea>
-          </div>
-
-          <div class="form-group">
-            <label>คำแนะนำการจัดเวร SATOPS</label>
-            <input 
-              v-model="newHoliday.dutyNote" 
-              type="text" 
-              placeholder="เช่น จัดเวรเตรียมพร้อมตามปกติ"
-            />
-          </div>
-
-          <div class="form-actions-row">
-            <button type="button" class="btn-secondary" @click="showAddModal = false">ยกเลิก</button>
-            <button type="submit" class="btn-primary" :disabled="!newHoliday.name || !newHoliday.date">
-              บันทึกวันหยุด
+    <!-- ========================================== -->
+    <!-- Google Calendar Modal (ดู / เพิ่ม / แก้ไข) -->
+    <!-- ========================================== -->
+    <div
+      v-if="isModalOpen"
+      class="gcal-modal-backdrop"
+      @click.self="isModalOpen = false"
+    >
+      <div class="gcal-modal-card">
+        <!-- 1. MODE: ดูรายละเอียด (View Details) -->
+        <div v-if="modalMode === 'view' && selectedHoliday" class="modal-view-mode">
+          <div
+            class="modal-color-strip"
+            :style="{ backgroundColor: CATEGORY_CONFIG[selectedHoliday.category].color }"
+          ></div>
+          <div class="modal-top-actions">
+            <button
+              class="icon-action-btn"
+              title="แก้ไขวันหยุดนี้"
+              @click="switchToEditModal"
+            >
+              ✏️ แก้ไข
+            </button>
+            <button
+              class="icon-action-btn delete"
+              title="ลบวันหยุดนี้"
+              @click="handleDeleteHoliday(selectedHoliday.id)"
+            >
+              🗑️ ลบ
+            </button>
+            <button
+              class="icon-action-btn close"
+              title="ปิด"
+              @click="isModalOpen = false"
+            >
+              ✕
             </button>
           </div>
-        </form>
-      </section>
+
+          <div class="modal-body-content">
+            <div class="modal-title-row">
+              <span class="modal-big-icon">{{ selectedHoliday.icon || '🏛️' }}</span>
+              <div>
+                <h2>{{ selectedHoliday.name }}</h2>
+                <span v-if="selectedHoliday.nameEn" class="modal-en-title">{{ selectedHoliday.nameEn }}</span>
+              </div>
+            </div>
+
+            <div class="modal-info-list">
+              <div class="modal-info-item">
+                <span class="info-icon">📅</span>
+                <div class="info-content">
+                  <strong>{{ formatFullThaiDate(selectedHoliday.date) }}</strong>
+                  <span
+                    v-if="getDaysDiff(selectedHoliday.date) > 0"
+                    class="diff-text"
+                  >
+                    (อีก {{ getDaysDiff(selectedHoliday.date) }} วัน)
+                  </span>
+                  <span
+                    v-else-if="getDaysDiff(selectedHoliday.date) === 0"
+                    class="diff-text today"
+                  >
+                    (วันนี้คือวันหยุด!)
+                  </span>
+                </div>
+              </div>
+
+              <div class="modal-info-item">
+                <span class="info-icon">🏷️</span>
+                <div class="info-content">
+                  <span
+                    class="cat-chip"
+                    :style="{
+                      backgroundColor: CATEGORY_CONFIG[selectedHoliday.category].bgLight,
+                      color: CATEGORY_CONFIG[selectedHoliday.category].color
+                    }"
+                  >
+                    {{ CATEGORY_CONFIG[selectedHoliday.category].label }}
+                  </span>
+                  <span v-if="selectedHoliday.isGovernmentHoliday" class="official-tag">
+                    ✓ หยุดราชการตามประกาศ
+                  </span>
+                </div>
+              </div>
+
+              <div v-if="selectedHoliday.description" class="modal-info-item">
+                <span class="info-icon">📖</span>
+                <div class="info-content">
+                  <p class="modal-description">{{ selectedHoliday.description }}</p>
+                </div>
+              </div>
+
+              <div class="modal-info-item">
+                <span class="info-icon">⚡</span>
+                <div class="info-content satops-duty-info">
+                  <strong>คำสั่งเวร SATOPS:</strong>
+                  <p>{{ selectedHoliday.dutyNote || 'จัดเวร 3 ผลัด ปฏิบัติหน้าที่ตรวจติดตามสัญญาณดาวเทียมตลอด 24 ชม.' }}</p>
+                </div>
+              </div>
+
+              <!-- TODO: สำหรับ Developer - ส่วนแสดงข้อมูลผู้เข้าเวรในวันหยุดนี้ (เว้นไว้สำหรับเชื่อมต่อกับหน้าตารางเวร) -->
+              <div v-if="getDutyForDate(selectedHoliday.date)?.md" class="modal-roster-box">
+                <div class="roster-box-title">🛡️ กำลังพลประจำเวรในวันหยุดนี้ (เชื่อมโยงจากตารางเวร):</div>
+                <div class="roster-box-grid">
+                  <div class="roster-item-card">
+                    <span class="role-badge-sm md">MD</span>
+                    <div class="officer-name">{{ getDutyForDate(selectedHoliday.date)?.md }}</div>
+                  </div>
+                  <div class="roster-item-card">
+                    <span class="role-badge-sm fmo">FMO</span>
+                    <div class="officer-name">{{ getDutyForDate(selectedHoliday.date)?.fmo }}</div>
+                  </div>
+                  <div class="roster-item-card">
+                    <span class="role-badge-sm gso">GSO</span>
+                    <div class="officer-name">{{ getDutyForDate(selectedHoliday.date)?.gso }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. MODE: ฟอร์มสร้าง / แก้ไข (Create or Edit Form) -->
+        <div v-else class="modal-form-mode">
+          <div class="form-modal-header">
+            <h3>{{ modalMode === 'create' ? 'เพิ่มวันหยุด / กิจกรรมใหม่' : 'แก้ไขข้อมูลวันหยุด' }}</h3>
+            <button class="icon-action-btn close" @click="isModalOpen = false">✕</button>
+          </div>
+
+          <form @submit.prevent="handleSaveHoliday" class="gcal-form">
+            <div class="form-group">
+              <label>ชื่อวันหยุดราชการ / กิจกรรม *</label>
+              <input
+                v-model="holidayForm.name"
+                type="text"
+                class="form-input"
+                placeholder="เช่น วันหยุดราชการกรณีพิเศษ หรือ วันครบรอบหน่วย..."
+                required
+              />
+            </div>
+
+            <div class="form-row-2">
+              <div class="form-group">
+                <label>วันที่ *</label>
+                <input
+                  v-model="holidayForm.date"
+                  type="date"
+                  class="form-input"
+                  required
+                />
+              </div>
+
+              <div class="form-group">
+                <label>หมวดหมู่</label>
+                <select v-model="holidayForm.category" class="form-select">
+                  <option value="government">วันหยุดราชการประจำปี</option>
+                  <option value="royal">วันสำคัญเกี่ยวกับสถาบัน</option>
+                  <option value="religious">วันสำคัญทางศาสนา</option>
+                  <option value="compensatory">วันหยุดชดเชย</option>
+                  <option value="special">วันหยุดพิเศษ (มติ ครม.)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row-2">
+              <div class="form-group">
+                <label>ไอคอนสัญลักษณ์</label>
+                <div class="icon-selector-row">
+                  <input
+                    v-model="holidayForm.icon"
+                    type="text"
+                    class="form-input icon-input"
+                    maxlength="2"
+                    placeholder="🏛️"
+                  />
+                  <div class="preset-icons">
+                    <span
+                      v-for="ico in ['🏛️', '👑', '🪷', '🔄', '✨', '🎉', '💦', '📌']"
+                      :key="ico"
+                      class="preset-icon-btn"
+                      @click="holidayForm.icon = ico"
+                    >
+                      {{ ico }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-group checkbox-group">
+                <label class="toggle-checkbox-label">
+                  <input
+                    v-model="holidayForm.isGovernmentHoliday"
+                    type="checkbox"
+                    class="gcal-checkbox"
+                  />
+                  <span>เป็นวันหยุดทำการราชการอย่างเป็นทางการ</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>รายละเอียด / ที่มาความสำคัญ</label>
+              <textarea
+                v-model="holidayForm.description"
+                rows="2"
+                class="form-textarea"
+                placeholder="ระบุรายละเอียดความสำคัญ หรือมติ ครม. ที่เกี่ยวข้อง"
+              ></textarea>
+            </div>
+
+            <div class="form-group">
+              <label>คำแนะนำการจัดเวร SATOPS</label>
+              <input
+                v-model="holidayForm.dutyNote"
+                type="text"
+                class="form-input"
+                placeholder="เช่น ผลัดเวรเตรียมพร้อมระดับ 1 ควบคุมระบบตลอด 24 ชั่วโมง"
+              />
+            </div>
+
+            <div class="form-modal-footer">
+              <button
+                type="button"
+                class="btn-secondary"
+                @click="isModalOpen = false"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                class="btn-primary"
+                :disabled="!holidayForm.name || !holidayForm.date"
+              >
+                {{ modalMode === 'create' ? 'สร้างวันหยุด' : 'บันทึกการแก้ไข' }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* ================= Base Layout ================= */
-.holiday-container {
+/* ========================================================
+   GOOGLE CALENDAR APP CONTAINER & VARIABLES
+   ======================================================== */
+.google-calendar-app {
+  --gcal-blue: #1a73e8;
+  --gcal-blue-hover: #1765cc;
+  --gcal-bg: #ffffff;
+  --gcal-gray-border: #dadce0;
+  --gcal-gray-light: #f1f3f4;
+  --gcal-gray-text: #3c4043;
+  --gcal-gray-sub: #70757a;
+  --gcal-shadow: 0 1px 3px 0 rgba(60,64,67,0.3), 0 4px 8px 3px rgba(60,64,67,0.15);
+  font-family: 'IBM Plex Sans Thai', 'Roboto', sans-serif;
+  color: var(--gcal-gray-text);
+  background: #ffffff;
+  border-radius: 8px;
+  border: 1px solid var(--gcal-gray-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  animation: fadeIn 0.25s ease-in-out;
+  min-height: 800px;
+  overflow: hidden;
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* ================= Header ================= */
-.holiday-header {
+/* ========================================================
+   TOPBAR (GOOGLE CALENDAR HEADER)
+   ======================================================== */
+.gcal-topbar {
+  height: 64px;
+  padding: 0 18px;
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 16px;
-  background: #ffffff;
-  padding: 24px 28px;
-  border-radius: 8px;
-  border: 1px solid var(--line, #e1e8f0);
-}
-
-.live-clock-badge {
-  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  background: #f0f7ff;
-  border: 1px solid #c8e0fa;
-  border-radius: 20px;
-  padding: 4px 12px;
-  font-size: 11px;
-  color: #1e5c9b;
-  font-weight: 500;
-  margin-bottom: 10px;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--gcal-gray-border);
+  background: #ffffff;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
-.live-dot {
-  width: 8px;
-  height: 8px;
-  background: #22c55e;
-  border-radius: 50%;
-  box-shadow: 0 0 8px #22c55e;
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(1.25); }
-}
-
-.page-title {
-  margin: 0;
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--ink, #182b43);
-  letter-spacing: -0.3px;
-}
-
-.page-desc {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: #64748b;
-  max-width: 720px;
-  line-height: 1.5;
-}
-
-.header-actions {
+.topbar-left, .topbar-right {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.view-mode-toggle {
+.hamburger-btn {
+  width: 40px;
+  height: 40px;
   display: flex;
-  background: #f1f5f9;
-  border-radius: 6px;
-  padding: 3px;
-  border: 1px solid #e2e8f0;
-}
-
-.mode-btn {
-  border: 0;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  border-radius: 50%;
+  border: none;
   background: transparent;
-  padding: 6px 14px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #64748b;
-  transition: all 0.15s ease;
+  cursor: pointer;
+  padding: 0;
 }
+.hamburger-btn:hover { background: var(--gcal-gray-light); }
+.hamburger-line { width: 18px; height: 2px; background: var(--gcal-gray-sub); border-radius: 1px; }
 
-.mode-btn.active {
-  background: #ffffff;
-  color: #1e40af;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
-.btn-primary {
-  background: #2474c3;
-  color: #ffffff;
-  border: 0;
-  border-radius: 6px;
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  box-shadow: 0 2px 6px rgba(36, 116, 195, 0.25);
-  transition: background 0.15s;
-}
-
-.btn-primary:hover {
-  background: #1d61a5;
-}
-
-.btn-secondary {
-  background: #ffffff;
-  color: #475569;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  transition: background 0.15s;
-}
-
-.btn-secondary:hover {
-  background: #f8fafc;
-}
-
-.btn-secondary-sm {
-  background: #ffffff;
-  color: #2474c3;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  margin-top: 10px;
-}
-
-.btn-secondary-sm:hover {
-  background: #f0f7ff;
-}
-
-/* ================= KPI Cards ================= */
-.kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-}
-
-.kpi-card {
-  background: #ffffff;
-  border: 1px solid #e1e8f0;
-  border-radius: 8px;
-  padding: 18px 20px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  transition: transform 0.15s, box-shadow 0.15s;
-}
-
-.kpi-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(24, 43, 67, 0.05);
-}
-
-.kpi-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  font-size: 22px;
-  flex: 0 0 auto;
-}
-
-.icon-red { background: #fee2e2; color: #dc2626; }
-.icon-amber { background: #fef3c7; color: #d97706; }
-.icon-blue { background: #e0f2fe; color: #0284c7; }
-.icon-green { background: #dcfce7; color: #16a34a; }
-
-.kpi-body {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.kpi-label {
-  font-size: 12px;
-  color: #64748b;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.kpi-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: #1e293b;
-  font-family: 'Space Grotesk', sans-serif;
-  margin: 3px 0 2px;
-}
-
-.kpi-value small {
-  font-size: 13px;
-  font-weight: 500;
-  color: #94a3b8;
-}
-
-.kpi-hint {
-  font-size: 11px;
-  color: #94a3b8;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.next-title {
-  font-size: 15px;
-  line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: 'IBM Plex Sans Thai', sans-serif;
-}
-
-.highlight-hint b {
-  color: #0284c7;
-}
-
-/* ================= Calendar Workspace (2 Columns) ================= */
-.calendar-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: 20px;
-  align-items: start;
-  transition: all 0.25s ease-in-out;
-}
-
-.calendar-workspace.sidebar-collapsed {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-/* Left Main Calendar Card */
-.calendar-main-card {
-  min-width: 0;
-  background: #ffffff;
-  border: 1px solid #e1e8f0;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
-}
-
-.month-navigation-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid #e2e8f0;
-  background: #fafcff;
-}
-
-.nav-cluster {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.nav-arrow-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #334155;
-  font-size: 18px;
-  display: grid;
-  place-items: center;
-  transition: all 0.15s;
-}
-
-.nav-arrow-btn:hover {
-  background: #f1f5f9;
-  border-color: #94a3b8;
-}
-
-.current-month-display {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.current-month-display h2 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.today-shortcut-btn {
-  border: 1px solid #b6d4f4;
-  background: #eff6ff;
-  color: #1d4ed8;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 10px;
-  border-radius: 14px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  transition: all 0.15s;
-}
-
-.today-shortcut-btn:hover {
-  background: #dbeafe;
-}
-
-.today-dot {
-  width: 6px;
-  height: 6px;
-  background: #2563eb;
-  border-radius: 50%;
-}
-
-.month-actions-right {
+.gcal-brand {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-right: 8px;
 }
 
-.year-select {
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #334155;
-  background: #ffffff;
-  outline: none;
-}
-
-.sidebar-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #334155;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 6px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.sidebar-toggle-btn:hover {
-  background: #f1f5f9;
-  border-color: #94a3b8;
-}
-
-.sidebar-toggle-btn.btn-active {
-  background: #eff6ff;
-  border-color: #93c5fd;
-  color: #1d4ed8;
-}
-
-.toggle-icon {
-  font-size: 14px;
-  line-height: 1;
-}
-
-/* Month Quick Bar (12 Months Pills) */
-.month-quick-bar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 16px;
-  background: #f8fafc;
-  border-bottom: 1px solid #edf2f7;
-  overflow-x: auto;
-}
-
-.month-tab {
-  flex: 1;
-  min-width: 40px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: #64748b;
-  padding: 5px 2px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  text-align: center;
-  position: relative;
-  transition: all 0.15s;
-  cursor: pointer;
-}
-
-.month-tab:hover {
-  background: #ffffff;
-  color: #1e3a5f;
-  border-color: #cbd5e1;
-}
-
-.month-tab.active {
-  background: #173252;
-  color: #ffffff;
-  box-shadow: 0 2px 4px rgba(23, 50, 82, 0.2);
-}
-
-.month-tab-dot {
-  position: absolute;
-  top: 3px;
-  right: 4px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #f59e0b;
-}
-
-.month-tab.active .month-tab-dot {
-  background: #fbbf24;
-}
-
-/* Category Filter Bar */
-.category-filters-bar {
-  display: flex;
-  gap: 6px;
-  padding: 10px 16px;
-  background: #ffffff;
-  border-bottom: 1px solid #f1f5f9;
-  overflow-x: auto;
-}
-
-.filter-chip {
-  border: 1px solid #e2e8f0;
-  background: #ffffff;
-  color: #475569;
-  padding: 4px 10px;
-  border-radius: 14px;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  transition: all 0.15s;
-}
-
-.filter-chip:hover {
-  background: #f8fafc;
-  border-color: #cbd5e1;
-}
-
-.filter-chip.active {
-  background: #1e3a5f;
-  color: #ffffff;
-  border-color: #1e3a5f;
-}
-
-.chip-count {
-  background: rgba(0, 0, 0, 0.08);
-  padding: 1px 5px;
-  border-radius: 10px;
-  font-size: 10px;
-}
-
-.filter-chip.active .chip-count {
-  background: rgba(255, 255, 255, 0.25);
-  color: #ffffff;
-}
-
-/* Calendar Grid */
-.calendar-grid-container {
-  padding: 14px 16px 16px;
-}
-
-.weekday-header-row {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 6px;
-  margin-bottom: 6px;
-}
-
-.weekday-col {
-  text-align: center;
-  font-size: 11px;
-  font-weight: 700;
-  color: #64748b;
-  padding: 7px 0;
-  border-radius: 4px;
-  background: #f8fafc;
-}
-
-.col-sunday {
-  color: #dc2626;
-  background: #fef2f2;
-}
-
-.col-saturday {
-  color: #475569;
-  background: #f1f5f9;
-}
-
-.calendar-days-grid {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.day-card {
-  min-width: 0;
-  min-height: 84px;
-  height: 90px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  padding: 6px 8px;
-  background: #ffffff;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  transition: all 0.15s ease;
-  cursor: pointer;
-  position: relative;
-  overflow: hidden;
-  box-sizing: border-box;
-}
-
-.day-card:hover {
-  border-color: #93c5fd;
-  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.08);
-  transform: translateY(-1px);
-}
-
-.day-card.other-month {
-  background: #fafafc;
-  opacity: 0.4;
-}
-
-.day-card.is-weekend:not(.other-month) {
-  background: #fbfbfc;
-}
-
-.day-card.is-today {
-  border: 2px solid #2563eb !important;
-  background: #f0f7ff !important;
-  box-shadow: 0 0 8px rgba(37, 99, 235, 0.15);
-}
-
-.day-card.has-holiday {
-  background: #fffdf9;
-  border-color: #fed7aa;
-}
-
-.day-card-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 2px;
-}
-
-.day-number {
-  font-size: 13px;
-  font-weight: 700;
-  font-family: 'Space Grotesk', sans-serif;
-  color: #1e293b;
-  line-height: 1;
-}
-
-.day-card.is-weekend:not(.other-month) .day-number {
-  color: #475569;
-}
-
-.today-tag {
-  background: #2563eb;
-  color: #ffffff;
-  font-size: 9px;
-  font-weight: 700;
-  padding: 1px 5px;
+.gcal-logo-icon {
+  width: 38px;
+  height: 38px;
+  border: 2px solid var(--gcal-blue);
   border-radius: 8px;
-  line-height: 1.2;
-}
-
-.day-holiday-chips {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-top: 3px;
-  min-width: 0;
-  width: 100%;
-}
-
-.holiday-pill {
-  display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 2px 5px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.2;
-  min-width: 0;
-  width: 100%;
-  box-sizing: border-box;
-  overflow: hidden;
-  border-left: 3px solid transparent;
-  transition: transform 0.1s;
-}
-
-.holiday-pill:hover {
-  transform: scale(1.02);
-}
-
-.pill-icon {
-  font-size: 9px;
-  flex: 0 0 auto;
-}
-
-.pill-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-}
-
-.other-month-dot-wrap {
-  margin-top: 4px;
-  display: flex;
   justify-content: center;
+  background: #ffffff;
+  box-shadow: 0 2px 4px rgba(26,115,232,0.15);
 }
+.logo-month { font-size: 8px; font-weight: 700; color: #ffffff; background: var(--gcal-blue); width: 100%; text-align: center; border-radius: 4px 4px 0 0; }
+.logo-day { font-size: 15px; font-weight: 800; color: var(--gcal-blue); line-height: 1.1; }
 
-.other-dot {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #cbd5e1;
-}
+.brand-text h2 { margin: 0; font-size: 18px; font-weight: 600; color: #202124; letter-spacing: -0.3px; }
+.brand-sub { font-size: 9px; font-weight: 700; color: var(--gcal-blue); letter-spacing: 1px; }
 
-.banner-actions-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.panel-close-btn {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 0;
-  background: rgba(255, 255, 255, 0.18);
-  color: #ffffff;
-  font-size: 11px;
-  display: grid;
-  place-items: center;
+.gcal-today-btn {
+  border: 1px solid var(--gcal-gray-border);
+  background: #ffffff;
+  color: var(--gcal-gray-text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 16px;
+  border-radius: 4px;
   cursor: pointer;
   transition: background 0.15s;
 }
+.gcal-today-btn:hover { background: #f8f9fa; border-color: #c6c9ce; }
 
-.panel-close-btn:hover {
-  background: rgba(255, 255, 255, 0.35);
+.demo-period-btn {
+  border: 1px solid #d2e3fc;
+  background: #e8f0fe;
+  color: var(--gcal-blue);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.demo-period-btn:hover { background: #d2e3fc; }
+
+.nav-arrows { display: flex; align-items: center; gap: 2px; }
+.arrow-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  color: var(--gcal-gray-sub);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.arrow-btn:hover { background: var(--gcal-gray-light); }
+
+.period-title-text {
+  font-size: 19px;
+  font-weight: 500;
+  color: #202124;
+  margin: 0 0 0 8px;
+  white-space: nowrap;
 }
 
-/* Badge Categories Colors */
-.badge-gov, .bg-gov {
-  background: #fee2e2;
-  color: #991b1b;
-  border-left-color: #ef4444;
-}
-
-.badge-royal, .bg-royal {
-  background: #fef3c7;
-  color: #92400e;
-  border-left-color: #f59e0b;
-}
-
-.badge-religious, .bg-religious {
-  background: #ede9fe;
-  color: #5b21b6;
-  border-left-color: #8b5cf6;
-}
-
-.badge-comp, .bg-comp {
-  background: #e0f2fe;
-  color: #075985;
-  border-left-color: #0284c7;
-}
-
-.badge-special, .bg-special {
-  background: #dcfce7;
-  color: #166534;
-  border-left-color: #22c55e;
-}
-
-.bg-today-sample {
-  background: #2563eb;
-  border: 1px solid #1d4ed8;
-}
-
-.bg-weekend-sample {
-  background: #f1f5f9;
-  border: 1px solid #cbd5e1;
-}
-
-/* Legend */
-.calendar-legend-bar {
+.gcal-search-box {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 14px 24px;
-  background: #f8fafc;
-  border-top: 1px solid #e2e8f0;
+  background: var(--gcal-gray-light);
+  border-radius: 8px;
+  padding: 6px 12px;
+  gap: 8px;
+  width: 250px;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+}
+.gcal-search-box:focus-within {
+  background: #ffffff;
+  border-color: var(--gcal-blue);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+.search-icon { font-size: 13px; color: var(--gcal-gray-sub); }
+.gcal-search-box input {
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 13px;
+  color: var(--gcal-gray-text);
+  width: 100%;
+}
+.clear-search-btn {
+  border: none;
+  background: transparent;
+  color: var(--gcal-gray-sub);
+  cursor: pointer;
   font-size: 11px;
-  color: #64748b;
 }
 
-.legend-title {
-  font-weight: 700;
-  color: #334155;
+.gcal-view-select {
+  border: 1px solid var(--gcal-gray-border);
+  background: #ffffff;
+  color: var(--gcal-gray-text);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
 }
+.gcal-view-select:hover { background: #f8f9fa; }
 
-.legend-item {
+.gcal-create-fab {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 24px;
+  border: 1px solid #dadce0;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(60,64,67,0.3), 0 4px 8px 3px rgba(60,64,67,0.15);
+  color: #3c4043;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.gcal-create-fab:hover {
+  background: #f8fafd;
+  box-shadow: 0 2px 6px rgba(60,64,67,0.3), 0 6px 12px 4px rgba(60,64,67,0.15);
+}
+.fab-plus-icon {
+  font-size: 18px;
+  font-weight: 800;
+  background: linear-gradient(45deg, #ea4335, #4285f4, #34a853, #fbbc05);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
-.legend-sample {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
+/* ========================================================
+   BODY LAYOUT (SIDEBAR + MAIN)
+   ======================================================== */
+.gcal-body-layout {
+  display: flex;
+  flex: 1;
+  min-height: 720px;
 }
 
-/* ================= Right Sidebar: Highlights ================= */
-.month-highlights-panel {
+/* SIDEBAR */
+.gcal-sidebar {
+  width: 256px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--gcal-gray-border);
+  padding: 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: #ffffff;
+}
+
+.sidebar-big-create-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 22px;
+  border-radius: 28px;
+  border: 1px solid #dadce0;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(60,64,67,0.25);
+  color: #3c4043;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+}
+.sidebar-big-create-btn:hover {
+  background: #fafbfd;
+  box-shadow: 0 3px 8px rgba(60,64,67,0.25);
+}
+.big-plus {
+  font-size: 20px;
+  background: linear-gradient(45deg, #ea4335, #4285f4, #34a853, #fbbc05);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Mini Calendar */
+.mini-calendar-wrap {
+  background: #ffffff;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--gcal-gray-border);
+}
+.mini-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+.mini-month-label { font-size: 13px; font-weight: 600; color: #202124; }
+.mini-nav { display: flex; gap: 4px; }
+.mini-nav-btn {
+  border: none;
+  background: transparent;
+  color: var(--gcal-gray-sub);
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+}
+.mini-nav-btn:hover { background: var(--gcal-gray-light); }
+
+.mini-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  text-align: center;
+}
+.mini-dow {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--gcal-gray-sub);
+  padding: 4px 0;
+}
+.mini-day-cell {
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  color: var(--gcal-gray-text);
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+.mini-day-cell:hover { background: var(--gcal-gray-light); }
+.mini-day-cell.other-month { color: #bdc1c6; }
+.mini-day-cell.has-event::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--gcal-blue);
+}
+.mini-day-cell.selected {
+  background: #d2e3fc;
+  color: var(--gcal-blue);
+  font-weight: 700;
+}
+
+/* Category Checkboxes */
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.sidebar-section-header h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--gcal-gray-sub);
+}
+.text-link-btn {
+  border: none;
+  background: transparent;
+  color: var(--gcal-blue);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.category-checkbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.category-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  color: var(--gcal-gray-text);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+.category-checkbox-item:hover { background: var(--gcal-gray-light); }
+.cat-color-badge { width: 10px; height: 10px; border-radius: 3px; }
+.cat-label-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cat-count-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--gcal-gray-sub);
+  background: var(--gcal-gray-light);
+  padding: 1px 5px;
+  border-radius: 10px;
+}
+
+.satops-info-box {
+  margin-top: auto;
+  padding: 12px;
+  background: #f8fafd;
+  border: 1px solid #e2edfc;
+  border-radius: 8px;
+}
+.satops-badge { font-size: 10px; font-weight: 700; color: var(--gcal-blue); margin-bottom: 6px; }
+.satops-desc { font-size: 11px; color: var(--gcal-gray-sub); margin: 0 0 10px; line-height: 1.4; }
+.btn-reset-defaults {
+  border: 1px solid #dadce0;
+  background: #ffffff;
+  color: #5f6368;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 4px;
+  width: 100%;
+  cursor: pointer;
+}
+.btn-reset-defaults:hover { background: #f1f3f4; color: #202124; }
+
+/* ========================================================
+   MAIN CONTENT & MONTH VIEW
+   ======================================================== */
+.gcal-main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  overflow: auto;
+}
+
+.month-view-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.month-header-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-bottom: 1px solid var(--gcal-gray-border);
+  background: #ffffff;
+}
+.month-dow-header {
+  text-align: center;
+  padding: 10px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gcal-gray-sub);
+  border-right: 1px solid var(--gcal-gray-border);
+}
+.month-dow-header:last-child { border-right: none; }
+.month-dow-header.is-weekend { color: #d93025; }
+.dow-short { display: none; }
+
+.month-cells-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: minmax(115px, 1fr);
+  flex: 1;
+}
+
+.gcal-month-cell {
+  border-right: 1px solid var(--gcal-gray-border);
+  border-bottom: 1px solid var(--gcal-gray-border);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  transition: background 0.15s;
+  background: #ffffff;
+  min-height: 110px;
+}
+.gcal-month-cell:nth-child(7n) { border-right: none; }
+.gcal-month-cell:hover { background: #f8f9fa; }
+.gcal-month-cell.not-current-month { background: #fafbfc; }
+.gcal-month-cell.not-current-month .date-number-bubble { color: #9aa0a6; }
+.gcal-month-cell.is-weekend { background: #fafbfc; }
+
+.cell-top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.date-number-bubble {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gcal-gray-text);
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+.date-number-bubble.today-bubble {
+  background: var(--gcal-blue);
+  color: #ffffff;
+}
+.cell-quick-add {
+  font-size: 13px;
+  color: #bdc1c6;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.gcal-month-cell:hover .cell-quick-add { opacity: 1; color: var(--gcal-blue); }
+
+.cell-events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+
+/* Event Pill (Google Calendar Style) */
+.gcal-event-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.gcal-event-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.12);
+}
+.pill-emoji { font-size: 11px; }
+.pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ========================================================
+   WEEK VIEW
+   ======================================================== */
+.week-view-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+.week-header-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-bottom: 1px solid var(--gcal-gray-border);
+}
+.week-col-header {
+  text-align: center;
+  padding: 10px 4px;
+  border-right: 1px solid var(--gcal-gray-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.week-col-header:last-child { border-right: none; }
+.week-dow { font-size: 11px; font-weight: 600; color: var(--gcal-gray-sub); }
+.week-daynum {
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--gcal-gray-text);
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+.week-daynum.today-bubble { background: var(--gcal-blue); color: #ffffff; }
+
+.week-body-columns {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  flex: 1;
+}
+.week-day-column {
+  border-right: 1px solid var(--gcal-gray-border);
+  padding: 10px 6px;
+  min-height: 500px;
+  cursor: pointer;
+  background: #ffffff;
+}
+.week-day-column:last-child { border-right: none; }
+.week-day-column:hover { background: #fafbfc; }
+.col-add-prompt {
+  font-size: 11px;
+  color: var(--gcal-blue);
+  text-align: center;
+  padding: 6px;
+  border: 1px dashed #d2e3fc;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  margin-bottom: 8px;
+}
+.week-day-column:hover .col-add-prompt { opacity: 1; }
+
+.week-column-events {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.week-event-card {
+  padding: 8px 10px;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  cursor: pointer;
+}
+.week-event-card .card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.week-event-card .card-head strong { font-size: 12px; }
+.week-event-card .card-desc { font-size: 11px; color: var(--gcal-gray-sub); margin: 0 0 6px; line-height: 1.3; }
+.week-event-card .card-cat-badge { font-size: 9px; font-weight: 600; color: #5f6368; background: #ffffff; padding: 2px 6px; border-radius: 4px; }
+
+/* ========================================================
+   DAY VIEW
+   ======================================================== */
+.day-view-container {
+  padding: 24px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.day-view-header-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background: #f8fafd;
+  border: 1px solid #d2e3fc;
+  border-radius: 8px;
+}
+.day-title-info h2 { margin: 0 0 4px; font-size: 22px; color: #202124; }
+.day-title-info p { margin: 0; font-size: 13px; font-weight: 600; }
+.text-amber { color: #d93025; }
+.text-green { color: #188038; }
+
+.day-events-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.empty-day-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--gcal-gray-sub);
+}
+.empty-day-state .empty-icon { font-size: 40px; margin-bottom: 12px; }
+
+.day-detailed-card {
+  background: #ffffff;
+  border: 1px solid var(--gcal-gray-border);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+}
+.detailed-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+.detailed-title-wrap { display: flex; align-items: center; gap: 12px; }
+.detailed-icon { font-size: 30px; }
+.detailed-title-wrap h3 { margin: 0; font-size: 19px; color: #202124; }
+.detailed-actions { display: flex; gap: 8px; }
+.btn-edit-sm {
+  border: 1px solid var(--gcal-gray-border);
+  background: #ffffff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-delete-sm {
+  border: 1px solid #fce8e6;
+  background: #fce8e6;
+  color: #c5221f;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.detailed-body { display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.detailed-row { display: flex; gap: 12px; align-items: baseline; }
+.row-label { width: 140px; color: var(--gcal-gray-sub); font-weight: 500; }
+.badge-pill { padding: 3px 8px; border-radius: 4px; font-weight: 600; font-size: 11px; }
+
+.satops-duty-box {
+  margin-top: 10px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 12px 16px;
+  border-left: 4px solid var(--gcal-blue);
+}
+.satops-duty-box strong { color: var(--gcal-blue); display: block; margin-bottom: 4px; }
+.satops-duty-box p { margin: 0; color: #3c4043; }
+
+/* ========================================================
+   AGENDA VIEW & YEAR VIEW
+   ======================================================== */
+.agenda-view-container, .year-view-container {
+  padding: 24px 30px;
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
-
-.panel-top-banner {
-  background: linear-gradient(135deg, #173252, #1f4a7a);
-  color: #ffffff;
-  padding: 18px 20px;
-  border-radius: 8px;
+.agenda-header-banner, .year-header-banner {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-bottom: 1px solid var(--gcal-gray-border);
+  padding-bottom: 14px;
 }
+.agenda-header-banner h3, .year-header-banner h3 { margin: 0 0 4px; font-size: 20px; color: #202124; }
+.agenda-header-banner p, .year-header-banner p { margin: 0; color: var(--gcal-gray-sub); font-size: 13px; }
 
-.banner-title-group {
+.agenda-list { display: flex; flex-direction: column; gap: 10px; }
+.agenda-item-card {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.banner-sparkle {
-  color: #f5b949;
-  font-size: 20px;
-}
-
-.panel-heading {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.2px;
-}
-
-.panel-subheading {
-  margin: 2px 0 0;
-  font-size: 11px;
-  color: #9cb8d9;
-}
-
-.highlight-count-badge {
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  padding: 3px 9px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.highlights-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.highlight-card {
-  background: #ffffff;
-  border: 1px solid #e1e8f0;
+  padding: 14px 18px;
+  border: 1px solid var(--gcal-gray-border);
   border-radius: 8px;
-  padding: 16px;
-  display: flex;
-  gap: 14px;
-  transition: all 0.15s ease;
+  background: #ffffff;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+  transition: all 0.15s;
+  gap: 20px;
 }
-
-.highlight-card:hover {
-  transform: translateY(-2px);
-  border-color: #cbd5e1;
-  box-shadow: 0 4px 14px rgba(24, 43, 67, 0.08);
+.agenda-item-card:hover {
+  background: #f8fafd;
+  border-color: #c2dbff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
-
-.card-date-badge {
-  background: #f1f5f9;
-  border-radius: 8px;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-width: 54px;
-  flex: 0 0 54px;
-  border: 1px solid #e2e8f0;
-}
-
-.badge-day {
-  font-size: 22px;
-  font-weight: 700;
-  color: #1e293b;
-  font-family: 'Space Grotesk', sans-serif;
-  line-height: 1;
-}
-
-.badge-month {
-  font-size: 11px;
-  font-weight: 600;
-  color: #64748b;
-  margin-top: 3px;
-}
-
-.badge-weekday {
-  font-size: 10px;
-  color: #94a3b8;
-}
-
-.card-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.card-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-  gap: 6px;
-}
-
-.category-pill {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 12px;
-}
-
-.countdown-chip {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 10px;
-}
-
-.countdown-chip.upcoming {
-  background: #fef3c7;
-  color: #b45309;
-}
-
-.countdown-chip.today {
-  background: #fee2e2;
-  color: #b91c1c;
-  animation: pulse 1.5s infinite;
-}
-
-.countdown-chip.past {
-  background: #f1f5f9;
-  color: #94a3b8;
-}
-
-.holiday-title {
-  margin: 0 0 6px;
-  font-size: 14px;
-  font-weight: 700;
-  color: #0f172a;
-  line-height: 1.3;
-}
-
-.holiday-icon {
-  margin-right: 2px;
-}
-
-.holiday-desc {
-  margin: 0 0 10px;
-  font-size: 12px;
-  color: #64748b;
-  line-height: 1.45;
-}
-
-.satops-duty-note {
-  background: #f8fafc;
-  border-left: 3px solid #f59e0b;
-  padding: 6px 10px;
-  border-radius: 0 4px 4px 0;
-  font-size: 11px;
-}
-
-.note-bullet {
-  font-weight: 700;
-  color: #b45309;
-  margin-right: 4px;
-}
-
-.note-text {
-  color: #475569;
-}
-
-/* Empty State */
-.empty-holidays-state {
-  background: #ffffff;
-  border: 1px dashed #cbd5e1;
-  border-radius: 8px;
-  padding: 32px 20px;
+.agenda-date-col {
+  width: 70px;
   text-align: center;
+  border-right: 1px solid var(--gcal-gray-border);
+  padding-right: 16px;
 }
+.agenda-day { font-size: 24px; font-weight: 700; color: var(--gcal-blue); display: block; line-height: 1; }
+.agenda-month { font-size: 11px; font-weight: 600; color: var(--gcal-gray-sub); display: block; }
+.agenda-dow { font-size: 10px; color: #9aa0a6; }
 
-.empty-icon {
-  font-size: 32px;
-  margin-bottom: 8px;
-}
+.agenda-content-col { flex: 1; }
+.agenda-title-line { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.agenda-title-line strong { font-size: 15px; color: #202124; }
+.cat-chip { padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+.agenda-desc { margin: 0; font-size: 12px; color: var(--gcal-gray-sub); }
 
-.empty-holidays-state h4 {
-  margin: 0 0 6px;
-  font-size: 15px;
-  color: #334155;
-}
-
-.empty-holidays-state p {
-  margin: 0 0 12px;
-  font-size: 12px;
-  color: #64748b;
-  line-height: 1.5;
-}
-
-/* Sneak Peek */
-.next-month-peek {
-  background: #ffffff;
-  border: 1px solid #e1e8f0;
-  border-radius: 8px;
-  padding: 16px;
-}
-
-.peek-title {
-  margin: 0 0 12px;
-  font-size: 12px;
-  font-weight: 700;
-  color: #475569;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.peek-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.peek-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: #f8fafc;
-  font-size: 11px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.peek-item:hover {
-  background: #eff6ff;
-}
-
-.peek-date {
-  font-weight: 600;
-  color: #1e40af;
-  white-space: nowrap;
-}
-
-.peek-name {
-  color: #334155;
-  font-weight: 500;
-  flex: 1;
-  padding: 0 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.peek-days {
-  color: #94a3b8;
-  font-size: 10px;
-  white-space: nowrap;
-}
-
-/* ================= Annual Table View ================= */
-.annual-view-card {
-  background: #ffffff;
-  border: 1px solid #e1e8f0;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.annual-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 18px 24px;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.annual-toolbar h3 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.annual-total-badge {
-  background: #eff6ff;
-  color: #1d4ed8;
+.agenda-action-col { display: flex; align-items: center; gap: 12px; }
+.countdown-tag {
   font-size: 11px;
   font-weight: 600;
-  padding: 4px 10px;
+  color: var(--gcal-blue);
+  background: #e8f0fe;
+  padding: 3px 8px;
   border-radius: 12px;
 }
-
-.annual-table-wrap {
-  overflow-x: auto;
-}
-
-.annual-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.annual-table th {
-  background: #f8fafc;
-  color: #64748b;
-  text-align: left;
-  padding: 12px 16px;
-  border-bottom: 1px solid #e2e8f0;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.annual-table td {
-  padding: 14px 16px;
-  border-bottom: 1px solid #f1f5f9;
-  color: #334155;
-}
-
-.annual-table tbody tr {
+.countdown-tag.today { color: #d93025; background: #fce8e6; }
+.btn-icon-more {
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  color: var(--gcal-gray-sub);
   cursor: pointer;
-  transition: background 0.1s;
 }
 
-.annual-table tbody tr:hover {
-  background: #f0f7ff;
-}
-
-.annual-table tr.row-today {
-  background: #eff6ff;
-  border-left: 3px solid #2563eb;
-}
-
-.date-cell-bold {
-  font-weight: 700;
-  color: #1e40af;
-  white-space: nowrap;
-}
-
-.holiday-name-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.table-icon {
-  font-size: 16px;
-}
-
-.desc-cell {
-  color: #64748b;
-  max-width: 320px;
-}
-
-.duty-cell {
+.year-table-wrap { overflow-x: auto; }
+.year-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.year-table th {
+  text-align: left;
+  padding: 10px 14px;
+  background: #f8f9fa;
+  border-bottom: 1px solid var(--gcal-gray-border);
+  color: var(--gcal-gray-sub);
+  font-weight: 600;
   font-size: 11px;
-  color: #0f766e;
-  max-width: 260px;
 }
+.year-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--gcal-gray-border);
+  color: var(--gcal-gray-text);
+}
+.year-table-row { cursor: pointer; transition: background 0.1s; }
+.year-table-row:hover { background: #f8fafd; }
+.table-icon { margin-right: 6px; }
+.desc-cell { color: var(--gcal-gray-sub); font-size: 12px; max-width: 320px; }
+.btn-row-action {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px 6px;
+  font-size: 14px;
+  border-radius: 4px;
+}
+.btn-row-action:hover { background: var(--gcal-gray-light); }
+.btn-row-action.delete:hover { background: #fce8e6; }
 
-/* ================= Modals ================= */
-.modal-backdrop {
+/* ========================================================
+   GOOGLE CALENDAR MODAL (VIEW / CREATE / EDIT)
+   ======================================================== */
+.gcal-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
-  background: rgba(15, 23, 42, 0.55);
-  backdrop-filter: blur(2px);
+  z-index: 1000;
+  background: rgba(32, 33, 36, 0.6);
   display: grid;
   place-items: center;
   padding: 20px;
+  animation: fadeIn 0.15s ease-out;
 }
 
-.holiday-detail-modal, .add-holiday-modal {
-  width: min(540px, 100%);
+.gcal-modal-card {
+  width: min(580px, 100%);
   background: #ffffff;
-  border-radius: 12px;
-  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.2);
-  padding: 28px;
-  position: relative;
-  animation: modalScale 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes modalScale {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
-}
-
-.modal-close-btn {
-  position: absolute;
-  top: 18px;
-  right: 18px;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  background: #f1f5f9;
-  color: #64748b;
-  font-size: 20px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.modal-close-btn:hover {
-  background: #e2e8f0;
-  color: #0f172a;
-}
-
-.modal-badge-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.status-official {
-  font-size: 11px;
-  color: #15803d;
-  font-weight: 600;
-}
-
-.modal-icon-header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 20px;
-}
-
-.huge-icon {
-  font-size: 38px;
-  line-height: 1;
-}
-
-.modal-holiday-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.modal-holiday-en {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.modal-info-box {
-  background: #f8fafc;
   border-radius: 8px;
-  padding: 16px;
-  border: 1px solid #e2e8f0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 18px;
+  box-shadow: 0 24px 38px 3px rgba(0,0,0,0.14), 0 9px 46px 8px rgba(0,0,0,0.12), 0 11px 15px -7px rgba(0,0,0,0.2);
+  overflow: hidden;
+  animation: scaleUp 0.18s cubic-bezier(0, 0, 0.2, 1);
+  position: relative;
 }
 
-.info-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
+@keyframes scaleUp {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
-.info-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #64748b;
-  text-transform: uppercase;
-}
+.modal-color-strip { height: 8px; width: 100%; }
 
-.info-val {
-  color: #1e293b;
-}
-
-.info-desc {
-  margin: 0;
-  color: #334155;
-  line-height: 1.5;
-}
-
-.modal-satops-box {
-  background: #fffbeb;
-  border: 1px solid #fef3c7;
-  border-left: 4px solid #f59e0b;
-  border-radius: 6px;
-  padding: 14px;
-  margin-bottom: 20px;
-}
-
-.satops-box-header {
-  font-size: 12px;
-  font-weight: 700;
-  color: #b45309;
-  margin-bottom: 4px;
-}
-
-.satops-box-body {
-  margin: 0;
-  font-size: 12px;
-  color: #78350f;
-  line-height: 1.5;
-}
-
-.modal-footer-actions {
+.modal-top-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px 0;
 }
-
-/* Add Form */
-.eyebrow-text {
-  font-size: 10px;
-  font-weight: 700;
-  color: #0284c7;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-}
-
-.modal-title {
-  margin: 4px 0 6px;
-  font-size: 20px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.modal-subtitle {
-  margin: 0 0 20px;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.add-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-group label {
-  font-size: 12px;
+.icon-action-btn {
+  border: none;
+  background: transparent;
+  color: var(--gcal-gray-sub);
+  font-size: 13px;
   font-weight: 600;
-  color: #334155;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
 }
+.icon-action-btn:hover { background: var(--gcal-gray-light); color: var(--gcal-gray-text); }
+.icon-action-btn.delete:hover { background: #fce8e6; color: #c5221f; }
 
-.form-group input,
-.form-group select,
-.form-group textarea {
-  border: 1px solid #cbd5e1;
+.modal-body-content { padding: 12px 28px 28px; }
+.modal-title-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+.modal-big-icon { font-size: 36px; }
+.modal-title-row h2 { margin: 0; font-size: 22px; color: #202124; line-height: 1.2; }
+.modal-en-title { font-size: 12px; color: var(--gcal-gray-sub); }
+
+.modal-info-list { display: flex; flex-direction: column; gap: 16px; }
+.modal-info-item { display: flex; align-items: flex-start; gap: 14px; font-size: 13px; }
+.info-icon { font-size: 18px; width: 22px; text-align: center; }
+.info-content { flex: 1; }
+.diff-text { color: var(--gcal-blue); font-weight: 600; margin-left: 8px; }
+.diff-text.today { color: #d93025; }
+.official-tag { margin-left: 10px; color: #188038; font-weight: 600; font-size: 11px; }
+.modal-description { margin: 0; color: #3c4043; line-height: 1.5; }
+.satops-duty-info {
+  background: #f8f9fa;
+  border-left: 4px solid var(--gcal-blue);
+  padding: 10px 14px;
+  border-radius: 4px;
+}
+.satops-duty-info strong { color: var(--gcal-blue); display: block; margin-bottom: 4px; }
+.satops-duty-info p { margin: 0; color: #3c4043; }
+
+/* Duty Roster Box inside Modal (for future devs) */
+.modal-roster-box {
+  margin-top: 14px;
+  background: #f0f7ff;
+  border: 1px solid #cce1fa;
   border-radius: 6px;
+  padding: 12px 14px;
+}
+.roster-box-title { font-size: 12px; font-weight: 700; color: #174ea6; margin-bottom: 8px; }
+.roster-box-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.roster-item-card { background: #ffffff; padding: 6px 8px; border-radius: 4px; border: 1px solid #d2e3fc; }
+.role-badge-sm { font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 3px; }
+.role-badge-sm.md { background: #e8f0fe; color: #1a73e8; }
+.role-badge-sm.fmo { background: #fef7e0; color: #e37400; }
+.role-badge-sm.gso { background: #e6f4ea; color: #188038; }
+.officer-name { font-size: 11px; font-weight: 600; margin-top: 2px; }
+
+/* FORM MODE */
+.modal-form-mode { padding: 24px 28px; }
+.form-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.form-modal-header h3 { margin: 0; font-size: 18px; color: #202124; }
+.gcal-form { display: flex; flex-direction: column; gap: 14px; }
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group label { font-size: 12px; font-weight: 600; color: var(--gcal-gray-sub); }
+.form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.form-input, .form-select, .form-textarea {
+  border: 1px solid var(--gcal-gray-border);
+  border-radius: 4px;
   padding: 8px 12px;
   font-size: 13px;
-  color: #1e293b;
+  color: var(--gcal-gray-text);
   outline: none;
   font-family: inherit;
 }
-
-.form-group input:focus,
-.form-group select:focus,
-.form-group textarea:focus {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+.form-input:focus, .form-select:focus, .form-textarea:focus {
+  border-color: var(--gcal-blue);
+  box-shadow: 0 0 0 2px rgba(26,115,232,0.15);
 }
 
-.form-row-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+.icon-selector-row { display: flex; align-items: center; gap: 10px; }
+.icon-input { width: 50px; text-align: center; font-size: 18px; }
+.preset-icons { display: flex; gap: 4px; }
+.preset-icon-btn {
+  font-size: 18px;
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+}
+.preset-icon-btn:hover { background: var(--gcal-gray-light); }
+
+.checkbox-group { justify-content: center; }
+.toggle-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #3c4043;
+  cursor: pointer;
 }
 
-.form-actions-row {
+.form-modal-footer {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 10px;
-  padding-top: 16px;
-  border-top: 1px solid #e2e8f0;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--gcal-gray-border);
 }
 
-.today-text {
-  color: #2563eb;
-  font-weight: 700;
-}
-
-/* Duty Roster Box (Connected Data) */
-.duty-roster-box {
-  margin-top: 10px;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  border-radius: 6px;
-  padding: 8px 10px;
-}
-
-.roster-header {
-  font-size: 11px;
-  font-weight: 700;
-  color: #166534;
-  margin-bottom: 5px;
-}
-
-.roster-chips {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.roster-chip {
-  font-size: 11px;
-  color: #1e293b;
-  background: #ffffff;
-  padding: 2px 8px;
+.btn-primary {
+  background: var(--gcal-blue);
+  color: #ffffff;
+  border: none;
   border-radius: 4px;
-  border: 1px solid #dcfce7;
-}
-
-.roster-chip b {
-  font-family: 'Space Grotesk', sans-serif;
-  margin-right: 4px;
-}
-
-.roster-chip.md b { color: #2563eb; }
-.roster-chip.fmo b { color: #d97706; }
-.roster-chip.gso b { color: #16a34a; }
-
-/* Modal Roster Box */
-.modal-roster-box {
-  background: #f0fdf4;
-  border: 1px solid #86efac;
-  border-radius: 8px;
-  padding: 14px;
-  margin-bottom: 20px;
-}
-
-.roster-box-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: #15803d;
-  margin-bottom: 10px;
-}
-
-.roster-box-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-
-.roster-item-card {
-  background: #ffffff;
-  border: 1px solid #bbf7d0;
-  border-radius: 6px;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.role-badge-sm {
-  align-self: flex-start;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-family: 'Space Grotesk', sans-serif;
-}
-
-.role-badge-sm.md { background: #e0f2fe; color: #0284c7; }
-.role-badge-sm.fmo { background: #fef3c7; color: #b45309; }
-.role-badge-sm.gso { background: #dcfce7; color: #15803d; }
-
-.officer-name {
-  font-size: 11px;
+  padding: 8px 18px;
+  font-size: 13px;
   font-weight: 600;
-  color: #1e293b;
-  line-height: 1.3;
+  cursor: pointer;
 }
+.btn-primary:hover { background: var(--gcal-blue-hover); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ================= Responsive ================= */
-@media (max-width: 1200px) {
-  .calendar-workspace {
-    grid-template-columns: 1fr;
-  }
-  .kpi-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
+.btn-secondary {
+  background: transparent;
+  color: var(--gcal-gray-sub);
+  border: 1px solid var(--gcal-gray-border);
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
 }
+.btn-secondary:hover { background: var(--gcal-gray-light); color: var(--gcal-gray-text); }
 
-@media (max-width: 768px) {
-  .kpi-grid {
-    grid-template-columns: 1fr;
-  }
-  .holiday-header {
-    flex-direction: column;
-  }
-  .header-actions {
-    width: 100%;
-    justify-content: space-between;
-  }
-  .day-card {
-    min-height: 80px;
-    padding: 4px;
-  }
-  .holiday-pill .pill-text {
-    display: none;
-  }
+/* ========================================================
+   RESPONSIVENESS
+   ======================================================== */
+@media (max-width: 900px) {
+  .gcal-sidebar { display: none; }
+  .dow-full { display: none; }
+  .dow-short { display: inline; }
+  .gcal-search-box { width: 160px; }
+  .period-title-text { font-size: 16px; }
+  .form-row-2 { grid-template-columns: 1fr; }
 }
 </style>
