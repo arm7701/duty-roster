@@ -543,21 +543,155 @@ const confirmImport = () => {
   showImportModal.value = false
 }
 
-const exportSchedule = () => {
-  if (!data.value) return
-  const exportData = data.value.schedule.map((row) => ({
+// -------------------------------------------------------------
+// ระบบส่งออกไฟล์ Excel (Export Excel Schedule) รายเดือน / รายสัปดาห์
+// -------------------------------------------------------------
+interface WeekOption {
+  index: number
+  label: string
+  startDate: string
+  endDate: string
+  count: number
+}
+
+const showExportModal = ref(false)
+const exportScope = ref<'month' | 'week'>('month')
+const exportSelectedMonth = ref('2026-10')
+const exportSelectedWeekIndex = ref(0)
+
+const openExportModal = () => {
+  exportScope.value = 'month'
+  exportSelectedMonth.value = `${calendarYear.value}-${String(calendarMonth.value).padStart(2, '0')}`
+  exportSelectedWeekIndex.value = 0
+  showExportModal.value = true
+}
+
+const availableWeeks = computed<WeekOption[]>(() => {
+  if (!exportSelectedMonth.value) return []
+  const [yearStr, monthStr] = exportSelectedMonth.value.split('-')
+  const y = parseInt(yearStr, 10)
+  const m = parseInt(monthStr, 10)
+  const daysInMonth = new Date(y, m, 0).getDate()
+
+  const thaiMonths = [
+    'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+    'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+  ]
+  const thMonthName = thaiMonths[m - 1]
+  const thYear = y + 543
+
+  const weeks: WeekOption[] = []
+  const weekRanges = [
+    { start: 1, end: 7 },
+    { start: 8, end: 14 },
+    { start: 15, end: 21 },
+    { start: 22, end: 28 },
+    { start: 29, end: daysInMonth }
+  ]
+
+  weekRanges.forEach((range, idx) => {
+    if (range.start > daysInMonth) return
+    const endDay = Math.min(range.end, daysInMonth)
+    const startDate = `${y}-${String(m).padStart(2, '0')}-${String(range.start).padStart(2, '0')}`
+    const endDate = `${y}-${String(m).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`
+
+    const count = data.value?.schedule.filter(
+      (s) => s.date >= startDate && s.date <= endDate
+    ).length ?? (endDay - range.start + 1)
+
+    weeks.push({
+      index: idx,
+      label: `สัปดาห์ที่ ${idx + 1} (${range.start} – ${endDay} ${thMonthName} ${thYear})`,
+      startDate,
+      endDate,
+      count
+    })
+  })
+
+  return weeks
+})
+
+const rowsToExport = computed<DutyRow[]>(() => {
+  if (!data.value) return []
+
+  if (exportScope.value === 'month') {
+    const prefix = exportSelectedMonth.value
+    return data.value.schedule.filter((row) => row.date.startsWith(prefix))
+  }
+
+  if (exportScope.value === 'week') {
+    const currentWeek = availableWeeks.value[exportSelectedWeekIndex.value]
+    if (!currentWeek) return []
+    return data.value.schedule.filter(
+      (row) => row.date >= currentWeek.startDate && row.date <= currentWeek.endDate
+    )
+  }
+
+  return data.value.schedule
+})
+
+const exportFileName = computed(() => {
+  const [yearStr, monthStr] = exportSelectedMonth.value.split('-')
+  const y = parseInt(yearStr, 10)
+  const m = parseInt(monthStr, 10)
+  const fullThaiMonths = [
+    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+  ]
+  const mName = fullThaiMonths[m - 1]
+  const thYear = y + 543
+
+  if (exportScope.value === 'month') {
+    return `ตารางเวร_SATOPS_${mName}_${thYear}.xlsx`
+  }
+
+  if (exportScope.value === 'week') {
+    const weekNum = exportSelectedWeekIndex.value + 1
+    const currentWeek = availableWeeks.value[exportSelectedWeekIndex.value]
+    const rangeTag = currentWeek ? `_${currentWeek.startDate.slice(-2)}-${currentWeek.endDate.slice(-2)}` : ''
+    return `ตารางเวร_SATOPS_สัปดาห์ที่${weekNum}${rangeTag}_${mName}_${thYear}.xlsx`
+  }
+
+  return `ตารางเวร_SATOPS_${exportSelectedMonth.value}.xlsx`
+})
+
+const executeExportExcel = () => {
+  const rows = rowsToExport.value
+  if (!rows.length) {
+    showToast('⚠️ ไม่พบข้อมูลตารางเวรในช่วงเวลาที่เลือก')
+    return
+  }
+
+  const exportData = rows.map((row, index) => ({
+    'ลำดับ': index + 1,
     'วันที่': row.date,
     'วัน': row.day,
-    'MD': row.md,
-    'FMO': row.fmo,
-    'GSO': row.gso,
+    'MD (Mission Director)': row.md,
+    'FMO (Flight Ops.)': row.fmo,
+    'GSO (Ground Station)': row.gso,
     'หมายเหตุ': row.note || ''
   }))
+
   const ws = XLSX.utils.json_to_sheet(exportData)
-  ws['!cols'] = [{ wch: 15 }, { wch: 12 }, { wch: 28 }, { wch: 28 }, { wch: 28 }, { wch: 20 }]
+  ws['!cols'] = [
+    { wch: 8 },  // ลำดับ
+    { wch: 16 }, // วันที่
+    { wch: 12 }, // วัน
+    { wch: 30 }, // MD
+    { wch: 30 }, // FMO
+    { wch: 30 }, // GSO
+    { wch: 22 }  // หมายเหตุ
+  ]
+
   const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, 'ตารางเวร')
-  XLSX.writeFile(wb, `ตารางเวร_SATOPS_${calendarYear.value}_${String(calendarMonth.value).padStart(2, '0')}.xlsx`)
+  const sheetTitle = exportScope.value === 'week' ? `สัปดาห์ที่ ${exportSelectedWeekIndex.value + 1}` : 'ตารางเวร'
+  XLSX.utils.book_append_sheet(wb, ws, sheetTitle)
+
+  const filename = exportFileName.value
+  XLSX.writeFile(wb, filename)
+
+  showToast(`ส่งออกไฟล์ ${filename} สำเร็จ (${rows.length} รายการ)`)
+  showExportModal.value = false
 }
 
 const fillRandomMonthData = (dashboard: DashboardData) => {
@@ -678,7 +812,7 @@ onMounted(async () => {
             <p class="heading-note">จัดการและติดตามกำลังพลประจำเวรประจำเดือน</p>
           </div>
           <div class="heading-actions">
-            <button class="button button-secondary" @click="exportSchedule">⇩ <span>ส่งออก</span></button>
+            <button class="button button-export" @click="openExportModal">⇩ <span>Export ตารางเวร</span></button>
             <button class="button button-import" @click="openImportModal">⇧ <span>Import ตารางเวร</span></button>
             <button class="button button-primary" @click="openDutyForm()">＋ เพิ่มเวร</button>
           </div>
@@ -830,6 +964,158 @@ onMounted(async () => {
             @click="confirmImport"
           >
             บันทึกนำเข้าตารางเวร ({{ validImportRows.length }} วัน)
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <!-- Modal ส่งออกตารางเวร (Export Excel Modal) -->
+    <div v-if="showExportModal" class="modal-backdrop" @click.self="showExportModal = false">
+      <section class="export-modal">
+        <button class="modal-close" @click="showExportModal = false">×</button>
+        <p class="eyebrow">ระบบส่งออกข้อมูล / EXCEL EXPORT</p>
+        <h2>ส่งออกข้อมูลตารางเวร</h2>
+        <p class="export-subtitle">
+          ดาวน์โหลดข้อมูลตารางเวรปฏิบัติการเป็นไฟล์ Excel (.xlsx) เลือกได้ทั้งแบบรายเดือน หรือรายสัปดาห์
+        </p>
+
+        <!-- แถบเลือกโหมด: รายเดือน หรือ รายสัปดาห์ -->
+        <div class="export-scope-selector">
+          <button
+            type="button"
+            :class="['scope-tab-btn', { active: exportScope === 'month' }]"
+            @click="exportScope = 'month'"
+          >
+            <span class="scope-icon">📅</span>
+            <div>
+              <strong>ส่งออกรายเดือน (Monthly)</strong>
+              <small>ข้อมูลเวรทั้งเดือน</small>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            :class="['scope-tab-btn', { active: exportScope === 'week' }]"
+            @click="exportScope = 'week'"
+          >
+            <span class="scope-icon">📆</span>
+            <div>
+              <strong>ส่งออกรายสัปดาห์ (Weekly)</strong>
+              <small>เลือกเฉพาะสัปดาห์ที่ต้องการ</small>
+            </div>
+          </button>
+        </div>
+
+        <!-- ตัวเลือกกรณี: ส่งออกรายเดือน -->
+        <div v-if="exportScope === 'month'" class="export-options-card">
+          <label class="export-field-label">เลือกเดือนที่ต้องการส่งออก</label>
+          <div class="month-select-row">
+            <select v-model="exportSelectedMonth" class="form-select export-select">
+              <option value="2026-10">ตุลาคม 2569 (เดือนปัจจุบัน)</option>
+              <option value="2026-09">กันยายน 2569</option>
+              <option value="2026-11">พฤศจิกายน 2569</option>
+            </select>
+            <span class="rows-count-chip">
+              พบข้อมูล {{ rowsToExport.length }} วัน
+            </span>
+          </div>
+        </div>
+
+        <!-- ตัวเลือกกรณี: ส่งออกรายสัปดาห์ -->
+        <div v-if="exportScope === 'week'" class="export-options-card">
+          <div class="week-header-row">
+            <label class="export-field-label">เลือกสัปดาห์ที่ต้องการส่งออก (เดือนตุลาคม 2569)</label>
+            <span class="rows-count-chip">
+              พบข้อมูล {{ rowsToExport.length }} วัน
+            </span>
+          </div>
+
+          <div class="week-pills-grid">
+            <button
+              v-for="week in availableWeeks"
+              :key="week.index"
+              type="button"
+              :class="['week-pill-card', { active: exportSelectedWeekIndex === week.index }]"
+              @click="exportSelectedWeekIndex = week.index"
+            >
+              <div class="week-pill-top">
+                <span class="week-num-badge">สัปดาห์ที่ {{ week.index + 1 }}</span>
+                <span class="week-days-count">{{ week.count }} วัน</span>
+              </div>
+              <strong class="week-date-range">{{ formatThaiDate(week.startDate) }} – {{ formatThaiDate(week.endDate) }}</strong>
+            </button>
+          </div>
+        </div>
+
+        <!-- กล่องสรุปไฟล์ที่จะได้รับ (Preview Summary) -->
+        <div class="export-summary-box">
+          <div class="summary-meta-item">
+            <span class="meta-icon">📄</span>
+            <div>
+              <small>ชื่อไฟล์ที่จะได้รับ</small>
+              <strong>{{ exportFileName }}</strong>
+            </div>
+          </div>
+          <div class="summary-meta-item">
+            <span class="meta-icon">📊</span>
+            <div>
+              <small>จำนวนข้อมูลที่จะส่งออก</small>
+              <strong class="highlight-count">{{ rowsToExport.length }} รายการ</strong>
+            </div>
+          </div>
+          <div class="summary-meta-item">
+            <span class="meta-icon">📋</span>
+            <div>
+              <small>รูปแบบไฟล์</small>
+              <strong>Excel (.xlsx)</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- พรีวิวตารางข้อมูล 3-5 แถวแรก -->
+        <div v-if="rowsToExport.length > 0" class="export-mini-preview">
+          <div class="mini-preview-title">
+            <span>ตัวอย่างข้อมูลในไฟล์ (แสดงสูงสุด 5 วันแรก):</span>
+          </div>
+          <div class="mini-table-scroll">
+            <table class="mini-export-table">
+              <thead>
+                <tr>
+                  <th>วันที่</th>
+                  <th>วัน</th>
+                  <th>MD</th>
+                  <th>FMO</th>
+                  <th>GSO</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in rowsToExport.slice(0, 5)" :key="r.date">
+                  <td><b>{{ formatThaiDate(r.date) }}</b></td>
+                  <td>{{ r.day }}</td>
+                  <td><span class="text-md">{{ r.md }}</span></td>
+                  <td><span class="text-fmo">{{ r.fmo }}</span></td>
+                  <td><span class="text-gso">{{ r.gso }}</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div v-else class="export-empty-alert">
+          ⚠️ ไม่พบข้อมูลตารางเวรในช่วงเวลาที่เลือก
+        </div>
+
+        <!-- ปุ่มดำเนินการ -->
+        <div class="form-actions">
+          <button type="button" class="button button-secondary" @click="showExportModal = false">
+            ยกเลิก
+          </button>
+          <button
+            type="button"
+            class="button button-download-main"
+            :disabled="rowsToExport.length === 0"
+            @click="executeExportExcel"
+          >
+            <span>📥</span> ดาวน์โหลดไฟล์ Excel ({{ rowsToExport.length }} รายการ)
           </button>
         </div>
       </section>
