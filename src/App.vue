@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import HolidayView from './components/HolidayView.vue'
+import PersonnelView from './components/PersonnelView.vue'
+import { personnelService, formatFullName } from './services/personnelService'
 import * as XLSX from 'xlsx'
 
 type DutyRow = { date: string; day: string; dayShort: string; md: string; mdCode: string; fmo: string; fmoCode: string; gso: string; gsoCode: string; note: string }
@@ -21,6 +23,7 @@ interface ParsedImportRow {
 
 const data = ref<DashboardData | null>(null)
 const activeNav = ref('ตารางเวร')
+const activePersonnelId = ref<number | null>(null)
 const search = ref('')
 const dayFilter = ref<'all' | 'workday' | 'holiday'>('all')
 const selectedRow = ref<DutyRow | null>(null)
@@ -58,12 +61,12 @@ const overviewYesterdayFallback: DutyRow = {
   date: '2026-09-30',
   day: 'พุธ',
   dayShort: 'พ.',
-  md: 'พ.อ. วิชัย ศุภกิจ',
-  mdCode: 'WS',
-  fmo: 'ร.ต. ธีรภัทร อุดมศรี',
-  fmoCode: 'TU',
-  gso: 'จ.ส.อ. วีรพล อินทร์แก้ว',
-  gsoCode: 'VI',
+  md: 'น.อ. กิตติพงษ์ ตัวอย่าง',
+  mdCode: 'กต',
+  fmo: 'ร.อ. ปาริชาติ ตัวอย่าง',
+  fmoCode: 'ปต',
+  gso: 'จ.อ. ศุภชัย ตัวอย่าง',
+  gsoCode: 'ศต',
   note: '',
 }
 
@@ -112,15 +115,30 @@ const shortPersonnelName = (name: string) => {
 }
 const dayClass = (row: DutyRow) => row.day === 'อาทิตย์' ? 'sunday' : row.day === 'เสาร์' ? 'saturday' : ''
 const openPerson = (name: string) => { selectedPerson.value = name }
+const selectedPersonProfile = computed(() => {
+  if (!selectedPerson.value) return null
+  return personnelService.getPersonByName(selectedPerson.value)
+})
+const goToPersonnelPage = (personId: number) => {
+  activePersonnelId.value = personId
+  activeNav.value = 'บุคลากร'
+  selectedPerson.value = ''
+}
+
 const calendarDays = computed<(string | null)[]>(() => {
   const firstDayOffset = new Date(calendarYear.value, calendarMonth.value - 1, 1).getDay()
   const daysInMonth = new Date(calendarYear.value, calendarMonth.value, 0).getDate()
   return [...Array(firstDayOffset).fill(null), ...Array.from({ length: daysInMonth }, (_, index) => `${calendarYear.value}-${String(calendarMonth.value).padStart(2, '0')}-${String(index + 1).padStart(2, '0')}`)]
 })
+
+const personnelList = computed(() => personnelService.getPersonnel())
 const personnelNames = computed(() => {
+  const fromService = personnelList.value.map((p) => formatFullName(p))
+  if (fromService.length) return fromService
   if (!data.value) return []
   return [...new Set([...data.value.personnel.map((person) => person.name), ...data.value.schedule.flatMap((row) => [row.md, row.fmo, row.gso])])]
 })
+
 const filteredPersonnel = (role: 'md' | 'fmo' | 'gso') => personnelNames.value.filter((name) => name.toLowerCase().includes(personnelSearch.value[role].toLowerCase()))
 const splitPersonnelName = (fullName: string) => {
   const parts = fullName.trim().split(/\s+/)
@@ -134,40 +152,66 @@ const personnelInitials = (fullName: string) => {
   const { firstName, lastName } = splitPersonnelName(fullName)
   return `${firstName.charAt(0)}${lastName.charAt(0)}`
 }
-const statisticSchedule = computed<DutyRow[]>(() => {
-  if (!data.value) return []
-  const currentRows = data.value.schedule.filter((row) => row.date.startsWith('2026-10-'))
-  const personnelPool = [...new Set(currentRows.flatMap((row) => [row.md, row.fmo, row.gso]).filter(Boolean))]
-  const history = [...currentRows]
-  for (let monthsAgo = 1; monthsAgo < statisticPeriod.value; monthsAgo += 1) {
-    const monthDate = new Date(2026, 9 - monthsAgo, 1)
-    const daysInMonth = new Date(2026, 10 - monthsAgo, 0).getDate()
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const baseIndex = day + monthsAgo * 3
-      const md = personnelPool[baseIndex % personnelPool.length]
-      const fmo = personnelPool[(baseIndex + Math.ceil(personnelPool.length / 3)) % personnelPool.length]
-      const gso = personnelPool[(baseIndex + Math.ceil(personnelPool.length * 2 / 3)) % personnelPool.length]
-      const date = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-      history.push({ date, day: '', dayShort: '', md, mdCode: '', fmo, fmoCode: '', gso, gsoCode: '', note: '' })
-    }
-  }
-  return history
-})
+
 const statisticRows = computed<StatisticRow[]>(() => {
   const totals = new Map<string, StatisticRow>()
-  for (const duty of statisticSchedule.value) {
+  const allPeople = personnelList.value
+
+  for (const person of allPeople) {
+    const fullName = formatFullName(person)
+    totals.set(fullName, {
+      fullName,
+      rank: person.rank,
+      firstName: person.firstname,
+      lastName: person.lastname,
+      md: 0,
+      fmo: 0,
+      gso: 0,
+      total: 0
+    })
+  }
+
+  // นับจากตารางเวรเดือนตุลาคม 2569
+  const currentMonthRows = data.value?.schedule.filter((row) => row.date.startsWith('2026-10-')) ?? []
+  for (const row of currentMonthRows) {
     for (const role of ['md', 'fmo', 'gso'] as DutyRole[]) {
-      const fullName = duty[role]
-      if (!fullName) continue
-      if (!totals.has(fullName)) {
-        const name = splitPersonnelName(fullName)
-        totals.set(fullName, { fullName, ...name, md: 0, fmo: 0, gso: 0, total: 0 })
+      const officer = row[role]
+      if (!officer) continue
+      let foundRow = totals.get(officer)
+      if (!foundRow) {
+        for (const val of totals.values()) {
+          if (officer.includes(val.firstName)) {
+            foundRow = val
+            break
+          }
+        }
       }
-      const row = totals.get(fullName)!
-      row[role] += 1
-      row.total += 1
+      if (foundRow) {
+        foundRow[role] += 1
+        foundRow.total += 1
+      }
     }
   }
+
+  // หากเลือกดูย้อนหลัง 2 หรือ 3 เดือน ให้นับจากประวัติการเข้าเวรในอดีต (ส.ค. - ก.ย. 2569)
+  if (statisticPeriod.value > 1) {
+    const startDate = statisticPeriod.value === 2 ? '2026-09-01' : '2026-08-01'
+    const endDate = '2026-09-30'
+    for (const person of allPeople) {
+      const hist = personnelService.getDutyHistory(person.id, { start: startDate, end: endDate, pageSize: 100 })
+      const targetRow = totals.get(formatFullName(person))
+      if (targetRow) {
+        for (const record of hist.data) {
+          const roleKey = record.duty.toLowerCase() as DutyRole
+          if (roleKey === 'md' || roleKey === 'fmo' || roleKey === 'gso') {
+            targetRow[roleKey] += 1
+            targetRow.total += 1
+          }
+        }
+      }
+    }
+  }
+
   const query = search.value.trim().toLowerCase()
   return [...totals.values()]
     .filter((row) => !query || row.fullName.toLowerCase().includes(query))
@@ -694,24 +738,6 @@ const executeExportExcel = () => {
   showExportModal.value = false
 }
 
-const fillRandomMonthData = (dashboard: DashboardData) => {
-  const personnelPool = [...new Set(dashboard.schedule.flatMap((row) => [row.md, row.fmo, row.gso]).filter(Boolean))]
-  const secondRoleOffset = Math.ceil(personnelPool.length / 3)
-  const thirdRoleOffset = Math.ceil(personnelPool.length * 2 / 3)
-  for (let day = 11; day <= 31; day += 1) {
-    const date = `2026-10-${String(day).padStart(2, '0')}`
-    const existing = dashboard.schedule.find((row) => row.date === date)
-    if (existing) continue
-    const baseIndex = day - 11
-    const md = personnelPool[baseIndex % personnelPool.length]
-    const fmo = personnelPool[(baseIndex + secondRoleOffset) % personnelPool.length]
-    const gso = personnelPool[(baseIndex + thirdRoleOffset) % personnelPool.length]
-    const dateValue = new Date(`${date}T00:00:00`)
-    const dayNames = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์']
-    dashboard.schedule.push({ date, day: dayNames[dateValue.getDay()], dayShort: dayNames[dateValue.getDay()].slice(0, 2), md, mdCode: md.slice(0, 2), fmo, fmoCode: fmo.slice(0, 2), gso, gsoCode: gso.slice(0, 2), note: '' })
-  }
-  dashboard.schedule.sort((first, second) => first.date.localeCompare(second.date))
-}
 const setupCalendarNavigation = () => {
   const header = document.querySelector<HTMLElement>('.calendar-header')
   const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.calendar-header button'))
@@ -737,19 +763,34 @@ watch([calendarMonth, calendarYear], async () => {
 watch(activeNav, () => { search.value = '' })
 onMounted(async () => {
   const dashboard: DashboardData = await (await fetch('/data/mock-data.json')).json()
-  fillRandomMonthData(dashboard)
 
   try {
     const saved = localStorage.getItem('satops_custom_schedule')
     if (saved) {
       const parsed = JSON.parse(saved)
       if (Array.isArray(parsed) && parsed.length > 0) {
-        dashboard.schedule = parsed
+        const hasOldMock = parsed.some(
+          (r: DutyRow) => r.md?.includes('วิชัย') || r.md?.includes('ณรงค์ฤทธิ์')
+        )
+        if (!hasOldMock) {
+          dashboard.schedule = parsed
+        } else {
+          localStorage.setItem('satops_custom_schedule', JSON.stringify(dashboard.schedule))
+        }
       }
+    } else {
+      localStorage.setItem('satops_custom_schedule', JSON.stringify(dashboard.schedule))
     }
   } catch (e) {
     console.error('Error loading saved schedule from localStorage', e)
   }
+
+  // ซิงค์บุคลากรจริงจาก personnelService
+  dashboard.summary.personnel = personnelService.getPersonnel().length
+  dashboard.personnel = personnelService.getPersonnel().map((p) => ({
+    name: formatFullName(p),
+    roles: p.position
+  }))
 
   data.value = dashboard
 })
@@ -798,12 +839,17 @@ onMounted(async () => {
         </section>
       </div>
 
-      <!-- 3. หน้าวันหยุด / วันลา / วันจำหน่าย (ซ่อนไว้ชั่วคราว) -->
+      <!-- 3. หน้าบุคลากร (Personnel Page) -->
+      <div v-else-if="activeNav === 'บุคลากร'" class="page-content personnel-page">
+        <PersonnelView :initialPersonId="activePersonnelId" />
+      </div>
+
+      <!-- 4. หน้าวันหยุด / วันลา / วันจำหน่าย (ซ่อนไว้ชั่วคราว) -->
       <div v-else-if="false && activeNav === 'วันหยุด/วันลา/วันจำหน่าย'" class="page-content holiday-page-content">
         <HolidayView :personnelList="data?.personnel" />
       </div>
 
-      <!-- 4. หน้าตารางเวร (Monthly Schedule) -->
+      <!-- 5. หน้าตารางเวร (Monthly Schedule) -->
       <div v-else class="page-content">
         <section class="page-heading">
           <div>
@@ -817,7 +863,7 @@ onMounted(async () => {
             <button class="button button-primary" @click="openDutyForm()">＋ เพิ่มเวร</button>
           </div>
         </section>
-        <section class="metric-grid"><article class="metric-card"><span class="metric-icon blue">♙</span><div><small>บุคลากรทั้งหมด</small><strong>{{ data.summary.personnel }}</strong><p><b>+2</b> จากเดือนที่แล้ว</p></div></article><article class="metric-card"><span class="metric-icon amber">▤</span><div><small>เวรเดือนนี้</small><strong>{{ data.summary.duties }}</strong><p>จากทั้งหมด 31 วัน</p></div></article><article class="metric-card"><span class="metric-icon green">✓</span><div><small>กำลังพลพร้อมเวร</small><strong>{{ data.summary.personnel - data.summary.unavailable }}</strong><p><b>87.5%</b> ของกำลังพล</p></div></article><article class="metric-card alert-card"><span class="metric-icon red">!</span><div><small>ไม่พร้อมปฏิบัติงาน</small><strong>{{ data.summary.unavailable }}</strong><p class="alert-text">ต้องตรวจสอบ</p></div></article></section>
+        <section class="metric-grid"><article class="metric-card"><span class="metric-icon blue">♙</span><div><small>บุคลากรทั้งหมด</small><strong>{{ personnelList.length }}</strong><p>กำลังพลในระบบ</p></div></article><article class="metric-card"><span class="metric-icon amber">▤</span><div><small>เวรเดือนนี้</small><strong>{{ data.summary.duties }}</strong><p>จากทั้งหมด 31 วัน</p></div></article><article class="metric-card"><span class="metric-icon green">✓</span><div><small>กำลังพลพร้อมเวร</small><strong>{{ personnelList.length }}</strong><p><b>100%</b> พร้อมปฏิบัติงาน</p></div></article><article class="metric-card alert-card"><span class="metric-icon red">!</span><div><small>ไม่พร้อมปฏิบัติงาน</small><strong>0</strong><p class="alert-text">ไม่มีรายงานการลา</p></div></article></section>
         <section class="schedule-panel"><div class="panel-heading"><div><div class="title-line"><h2>ตารางเวรประจำเดือน</h2><span class="status-badge"><i></i> อยู่ระหว่างตรวจสอบ</span></div><p>แสดงข้อมูลประจำเดือน {{ monthLabel }} · ข้อมูลล่าสุด 18 ก.ย. 2569, 09:42 น.</p></div><div class="month-switcher"><button aria-label="เดือนก่อนหน้า">‹</button><span>{{ monthLabel }}</span><button aria-label="เดือนถัดไป">›</button></div></div><div class="table-toolbar"><div class="toolbar-filters"><button :class="['filter-button', { active: dayFilter === 'all' }]" @click="dayFilter = 'all'">ดูทั้งหมด</button><button :class="['filter-button', { active: dayFilter === 'workday' }]" @click="dayFilter = 'workday'">วันทำงาน จ-ศ</button><button :class="['filter-button', { active: dayFilter === 'holiday' }]" @click="dayFilter = 'holiday'">วันหยุด / วันหยุดราชการ</button></div><div class="table-meta"><span class="legend-dot weekday"></span> วันปกติ <span class="legend-dot weekend"></span> วันหยุด <span class="legend-dot holiday"></span> วันหยุดราชการ</div></div>
           <div class="schedule-table-wrap"><table class="schedule-table"><thead><tr><th class="day-column">วัน</th><th class="date-column">วันที่ / เดือน / ปี <span>↕</span></th><th class="role-header md-header"><span class="role-code">MD</span></th><th class="role-header fmo-header"><span class="role-code">FMO</span></th><th class="role-header gso-header"><span class="role-code">GSO</span></th><th class="note-column">หมายเหตุ</th></tr></thead><tbody><tr v-for="row in visibleSchedule" :key="row.date" :class="dayClass(row)" @click="selectedRow = row"><td class="day-cell"><span>{{ row.day }}</span><small>{{ row.dayShort }}</small></td><td class="date-cell"><span>{{ formatThaiDate(row.date) }}</span></td><td class="person-cell" @click.stop="openPerson(row.md)"><span class="person-avatar md-avatar">{{ row.mdCode }}</span><span>{{ shortPersonnelName(row.md) }}</span></td><td class="person-cell" @click.stop="openPerson(row.fmo)"><span class="person-avatar fmo-avatar">{{ row.fmoCode }}</span><span>{{ shortPersonnelName(row.fmo) }}</span></td><td class="person-cell" @click.stop="openPerson(row.gso)"><span class="person-avatar gso-avatar">{{ row.gsoCode }}</span><span>{{ shortPersonnelName(row.gso) }}</span></td><td class="note-cell"><span v-if="row.note" :class="{ holiday: row.note.includes('ราชการ') }">{{ row.note }}</span><span v-else class="empty-note">—</span></td></tr></tbody></table><div v-if="!visibleSchedule.length" class="empty-table">ไม่พบข้อมูลที่ตรงกับคำค้นหา</div></div><div class="table-footer"><span>แสดง {{ visibleSchedule.length }} จาก 31 วัน</span><div class="pagination"><button>‹</button><button class="selected-page">1</button><button>2</button><button>3</button><span>...</span><button>4</button><button>›</button></div><span>หน้า 1 จาก 4</span></div></section>
       </div>
@@ -827,7 +873,27 @@ onMounted(async () => {
     <div v-if="selectedRow" class="modal-backdrop" @click.self="selectedRow = null"><section class="detail-modal"><button class="modal-close" @click="selectedRow = null">×</button><p class="eyebrow">รายละเอียดเวร</p><h2>{{ selectedRow.day }} {{ formatThaiDate(selectedRow.date) }}</h2><div class="detail-list"><div><span>MD</span><b>{{ shortPersonnelName(selectedRow.md) }}</b></div><div><span>FMO</span><b>{{ shortPersonnelName(selectedRow.fmo) }}</b></div><div><span>GSO</span><b>{{ shortPersonnelName(selectedRow.gso) }}</b></div><div><span>หมายเหตุ</span><b>{{ selectedRow.note || 'ไม่มีหมายเหตุ' }}</b></div></div><button class="button button-primary full-button" @click="openDutyForm(selectedRow)">แก้ไขรายละเอียด</button></section></div>
 
     <!-- Modal ข้อมูลบุคลากร -->
-    <div v-if="selectedPerson" class="modal-backdrop" @click.self="selectedPerson = ''"><section class="person-modal"><button class="modal-close" @click="selectedPerson = ''">×</button><span class="large-person-avatar">{{ selectedPerson.split(' ').slice(-2).map((part) => part[0]).join('') }}</span><p class="eyebrow">บุคลากร</p><h2>{{ normalizeRank(selectedPerson) }}</h2><p>หน่วยปฏิบัติการดาวเทียม · พร้อมปฏิบัติงาน</p><div class="person-modal-stats"><span><b>6</b>เวรเดือนนี้</span><span><b>2</b> วันหยุด</span><span><b>MD</b> สิทธิ์ปฏิบัติการ</span></div></section></div>
+    <div v-if="selectedPerson" class="modal-backdrop" @click.self="selectedPerson = ''">
+      <section class="person-modal">
+        <button class="modal-close" @click="selectedPerson = ''">×</button>
+        <img v-if="selectedPersonProfile?.photo" :src="selectedPersonProfile.photo" class="large-person-avatar-img" :alt="selectedPersonProfile.firstname" />
+        <span v-else class="large-person-avatar">{{ selectedPerson.split(' ').slice(-2).map((part) => part[0]).join('') }}</span>
+        <p class="eyebrow">บุคลากรหน่วยปฏิบัติการดาวเทียม</p>
+        <h2>{{ selectedPersonProfile ? formatFullName(selectedPersonProfile) : normalizeRank(selectedPerson) }}</h2>
+        <p>{{ selectedPersonProfile?.position || 'หน่วยปฏิบัติการดาวเทียม · พร้อมปฏิบัติงาน' }}</p>
+        <div v-if="selectedPersonProfile" class="person-modal-info">
+          <div><span>อายุ</span><b>{{ selectedPersonProfile.age }} ปี</b></div>
+          <div><span>กรุ๊ปเลือด</span><b>{{ selectedPersonProfile.blood_type }}</b></div>
+          <div><span>เบอร์โทร</span><b>{{ selectedPersonProfile.phone || '—' }}</b></div>
+          <div><span>ผู้ติดต่อฉุกเฉิน</span><b>{{ selectedPersonProfile.emergency_name || '—' }} ({{ selectedPersonProfile.emergency_relationship || '—' }})</b></div>
+        </div>
+        <div class="person-modal-actions">
+          <button v-if="selectedPersonProfile" class="button button-primary full-button" @click="goToPersonnelPage(selectedPersonProfile.id)">
+            ดูประวัติและจัดการข้อมูลในหน้าบุคลากร →
+          </button>
+        </div>
+      </section>
+    </div>
 
     <!-- Modal เพิ่ม/แก้ไขเวร -->
     <div v-if="showDutyForm" class="modal-backdrop" @click.self="showDutyForm = false"><section class="duty-form-modal"><button class="modal-close" @click="showDutyForm = false">×</button><p class="eyebrow">ตารางเวร / เพิ่มหรือแก้ไข</p><h2>กำหนดผู้ปฏิบัติหน้าที่</h2><p class="form-range-note">แสดงและจัดเวรเฉพาะวันที่ 1 - 10 ตุลาคม 2569</p><label class="form-label">วันที่ปฏิบัติงาน</label><div class="calendar-picker"><div class="calendar-header"><button>‹</button><strong>ตุลาคม 2569</strong><button>›</button></div><div class="calendar-weekdays"><span>อา.</span><span>จ.</span><span>อ.</span><span>พ.</span><span>พฤ.</span><span>ศ.</span><span>ส.</span></div><div class="calendar-grid"><button v-for="(date, index) in calendarDays" :key="date ?? `empty-${index}`" :disabled="!date" :class="{ selected: dutyDate === date, assigned: date && data.schedule.some((row) => row.date === date) }" @click="date && (dutyDate = date)">{{ date ? Number(date.slice(-2)) : '' }}</button></div></div><div class="assignment-grid"><div class="assignment-field"><label><span class="role-label md-label">MD</span> Mission Director</label><input v-model="personnelSearch.md" placeholder="ค้นหา หรือเลือกบุคลากร" /><select v-model="dutyMd"><option disabled value="">เลือกบุคลากร</option><option v-for="person in filteredPersonnel('md')" :key="`md-${person}`" :value="person">{{ shortPersonnelName(person) }}</option></select></div><div class="assignment-field"><label><span class="role-label fmo-label">FMO</span> Flight &amp; Mission Ops.</label><input v-model="personnelSearch.fmo" placeholder="ค้นหา หรือเลือกบุคลากร" /><select v-model="dutyFmo"><option disabled value="">เลือกบุคลากร</option><option v-for="person in filteredPersonnel('fmo')" :key="`fmo-${person}`" :value="person">{{ shortPersonnelName(person) }}</option></select></div><div class="assignment-field"><label><span class="role-label gso-label">GSO</span> Ground Station Ops.</label><input v-model="personnelSearch.gso" placeholder="ค้นหา หรือเลือกบุคลากร" /><select v-model="dutyGso"><option disabled value="">เลือกบุคลากร</option><option v-for="person in filteredPersonnel('gso')" :key="`gso-${person}`" :value="person">{{ shortPersonnelName(person) }}</option></select></div></div><label class="form-label note-label">หมายเหตุ</label><textarea v-model="dutyNote" rows="3" placeholder="เพิ่มหมายเหตุสำหรับวันนี้"></textarea><div class="form-actions"><button class="button button-secondary" @click="showDutyForm = false">ยกเลิก</button><button class="button button-primary" :disabled="!dutyMd || !dutyFmo || !dutyGso" @click="saveDuty">บันทึกเวร</button></div></section></div>
