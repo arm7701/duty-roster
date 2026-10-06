@@ -1,11 +1,23 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import HolidayView from './components/HolidayView.vue'
+import * as XLSX from 'xlsx'
 
 type DutyRow = { date: string; day: string; dayShort: string; md: string; mdCode: string; fmo: string; fmoCode: string; gso: string; gsoCode: string; note: string }
 type DashboardData = { currentUser: { name: string; role: string; initials: string }; summary: Record<string, number>; schedule: DutyRow[]; personnel: { name: string; roles: string }[] }
 type DutyRole = 'md' | 'fmo' | 'gso'
 type StatisticRow = { fullName: string; rank: string; firstName: string; lastName: string; md: number; fmo: number; gso: number; total: number }
+
+interface ParsedImportRow {
+  date: string
+  day: string
+  dayShort: string
+  md: string
+  fmo: string
+  gso: string
+  isValid: boolean
+  error?: string
+}
 
 const data = ref<DashboardData | null>(null)
 const activeNav = ref('ตารางเวร')
@@ -211,14 +223,343 @@ const saveDuty = () => {
   const existing = data.value.schedule.find((row) => row.date === dutyDate.value)
   if (existing) {
     existing.md = dutyMd.value; existing.fmo = dutyFmo.value; existing.gso = dutyGso.value; existing.note = dutyNote.value
+    existing.mdCode = generatePersonCode(dutyMd.value)
+    existing.fmoCode = generatePersonCode(dutyFmo.value)
+    existing.gsoCode = generatePersonCode(dutyGso.value)
   } else {
     const date = new Date(`${dutyDate.value}T00:00:00`)
     const dayNames = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์']
-    data.value.schedule.push({ date: dutyDate.value, day: dayNames[date.getDay()], dayShort: dayNames[date.getDay()].slice(0, 2), md: dutyMd.value, mdCode: dutyMd.value.slice(0, 2), fmo: dutyFmo.value, fmoCode: dutyFmo.value.slice(0, 2), gso: dutyGso.value, gsoCode: dutyGso.value.slice(0, 2), note: dutyNote.value })
+    data.value.schedule.push({
+      date: dutyDate.value,
+      day: dayNames[date.getDay()],
+      dayShort: dayNames[date.getDay()].slice(0, 2),
+      md: dutyMd.value,
+      mdCode: generatePersonCode(dutyMd.value),
+      fmo: dutyFmo.value,
+      fmoCode: generatePersonCode(dutyFmo.value),
+      gso: dutyGso.value,
+      gsoCode: generatePersonCode(dutyGso.value),
+      note: dutyNote.value
+    })
     data.value.schedule.sort((a, b) => a.date.localeCompare(b.date))
   }
+  try {
+    localStorage.setItem('satops_custom_schedule', JSON.stringify(data.value.schedule))
+  } catch (e) {}
   showDutyForm.value = false
 }
+
+// -------------------------------------------------------------
+// ระบบนำเข้าไฟล์ Excel (Import Excel Schedule) 4 ช่องตายตัว
+// -------------------------------------------------------------
+const showImportModal = ref(false)
+const importFileName = ref('')
+const importRows = ref<ParsedImportRow[]>([])
+const importError = ref('')
+const isDragging = ref(false)
+const overwriteExisting = ref(true)
+const excelFileInput = ref<HTMLInputElement | null>(null)
+const toastMessage = ref('')
+let toastTimeout: any = null
+
+const showToast = (msg: string) => {
+  toastMessage.value = msg
+  if (toastTimeout) clearTimeout(toastTimeout)
+  toastTimeout = setTimeout(() => {
+    toastMessage.value = ''
+  }, 4000)
+}
+
+const validImportRows = computed(() => importRows.value.filter((r) => r.isValid))
+const invalidImportRows = computed(() => importRows.value.filter((r) => !r.isValid))
+
+const openImportModal = () => {
+  importFileName.value = ''
+  importRows.value = []
+  importError.value = ''
+  isDragging.value = false
+  overwriteExisting.value = true
+  showImportModal.value = true
+}
+
+const triggerFileInput = () => {
+  excelFileInput.value?.click()
+}
+
+const handleFileInputChange = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (file) {
+    processExcelFile(file)
+  }
+  target.value = ''
+}
+
+const handleFileDrop = (event: DragEvent) => {
+  isDragging.value = false
+  const file = event.dataTransfer?.files?.[0]
+  if (file) {
+    processExcelFile(file)
+  }
+}
+
+const parseDateToIso = (raw: any): string | null => {
+  if (raw === null || raw === undefined || raw === '') return null
+
+  if (typeof raw === 'number') {
+    const dateObj = XLSX.SSF.parse_date_code(raw)
+    if (dateObj && dateObj.y && dateObj.m && dateObj.d) {
+      let y = dateObj.y
+      if (y > 2400) y -= 543
+      return `${y}-${String(dateObj.m).padStart(2, '0')}-${String(dateObj.d).padStart(2, '0')}`
+    }
+  }
+
+  if (raw instanceof Date && !isNaN(raw.getTime())) {
+    let y = raw.getFullYear()
+    if (y > 2400) y -= 543
+    return `${y}-${String(raw.getMonth() + 1).padStart(2, '0')}-${String(raw.getDate()).padStart(2, '0')}`
+  }
+
+  const str = String(raw).trim()
+  if (!str) return null
+
+  const isoMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/)
+  if (isoMatch) {
+    let y = parseInt(isoMatch[1], 10)
+    if (y > 2400) y -= 543
+    const m = parseInt(isoMatch[2], 10)
+    const d = parseInt(isoMatch[3], 10)
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+  }
+
+  const dmyMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/)
+  if (dmyMatch) {
+    const d = parseInt(dmyMatch[1], 10)
+    const m = parseInt(dmyMatch[2], 10)
+    let y = parseInt(dmyMatch[3], 10)
+    if (y > 2400) y -= 543
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+  }
+
+  const thaiMonths: Record<string, number> = {
+    'ม.ค.': 1, 'มกราคม': 1,
+    'ก.พ.': 2, 'กุมภาพันธ์': 2,
+    'มี.ค.': 3, 'มีนาคม': 3,
+    'เม.ย.': 4, 'เมษายน': 4,
+    'พ.ค.': 5, 'พฤษภาคม': 5,
+    'มิ.ย.': 6, 'มิถุนายน': 6,
+    'ก.ค.': 7, 'กรกฎาคม': 7,
+    'ส.ค.': 8, 'สิงหาคม': 8,
+    'ก.ย.': 9, 'กันยายน': 9,
+    'ต.ค.': 10, 'ตุลาคม': 10,
+    'พ.ย.': 11, 'พฤศจิกายน': 11,
+    'ธ.ค.': 12, 'ธันวาคม': 12
+  }
+  for (const [thMonth, mNum] of Object.entries(thaiMonths)) {
+    if (str.includes(thMonth)) {
+      const parts = str.split(/\s+/)
+      const dayNum = parseInt(parts[0], 10)
+      const yearPart = parts[parts.length - 1]
+      let yearNum = parseInt(yearPart, 10)
+      if (yearNum > 2400) yearNum -= 543
+      if (!isNaN(dayNum) && !isNaN(yearNum)) {
+        return `${yearNum}-${String(mNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`
+      }
+    }
+  }
+
+  return null
+}
+
+const getDayNames = (isoDate: string) => {
+  const d = new Date(`${isoDate}T00:00:00`)
+  const dayNames = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์']
+  const day = dayNames[d.getDay()] || ''
+  return { day, dayShort: day.slice(0, 2) }
+}
+
+const generatePersonCode = (name: string): string => {
+  if (!name) return ''
+  const trimmed = name.trim()
+  const parts = trimmed.split(/\s+/)
+  if (parts.length >= 3) {
+    const first = parts[1] || ''
+    const last = parts[parts.length - 1] || ''
+    return `${first.charAt(0)}${last.charAt(0)}`
+  }
+  return trimmed.slice(0, 2)
+}
+
+const processExcelFile = async (file: File) => {
+  importError.value = ''
+  importRows.value = []
+  importFileName.value = file.name
+
+  try {
+    const arrayBuffer = await file.arrayBuffer()
+    const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' })
+    if (!workbook.SheetNames.length) {
+      importError.value = 'ไม่พบแผ่นงาน (Sheet) ในไฟล์ Excel นี้'
+      return
+    }
+
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+    const rawData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }) as any[][]
+    if (!rawData.length) {
+      importError.value = 'ไฟล์ไม่มีข้อมูล'
+      return
+    }
+
+    let headerRowIndex = -1
+    const colMap = { date: 0, md: 1, fmo: 2, gso: 3 }
+
+    for (let r = 0; r < Math.min(rawData.length, 5); r++) {
+      const row = rawData[r]
+      if (!Array.isArray(row)) continue
+      const strRow = row.map((c) => String(c).trim().toLowerCase())
+
+      const hasDate = strRow.some((c) => c.includes('วัน') || c.includes('date'))
+      const hasMd = strRow.some((c) => c.includes('md'))
+      const hasFmo = strRow.some((c) => c.includes('fmo'))
+      const hasGso = strRow.some((c) => c.includes('gso'))
+
+      if (hasDate || (hasMd && hasFmo && hasGso)) {
+        headerRowIndex = r
+        strRow.forEach((c, idx) => {
+          if (c.includes('วัน') || c.includes('date')) colMap.date = idx
+          else if (c.includes('md')) colMap.md = idx
+          else if (c.includes('fmo')) colMap.fmo = idx
+          else if (c.includes('gso')) colMap.gso = idx
+        })
+        break
+      }
+    }
+
+    const startIndex = headerRowIndex >= 0 ? headerRowIndex + 1 : 0
+    const parsedList: ParsedImportRow[] = []
+
+    for (let r = startIndex; r < rawData.length; r++) {
+      const row = rawData[r]
+      if (!Array.isArray(row) || row.every((c) => c === '' || c === null || c === undefined)) {
+        continue
+      }
+
+      const rawDate = row[colMap.date]
+      const rawMd = String(row[colMap.md] ?? '').trim()
+      const rawFmo = String(row[colMap.fmo] ?? '').trim()
+      const rawGso = String(row[colMap.gso] ?? '').trim()
+
+      const isoDate = parseDateToIso(rawDate)
+      if (!isoDate) {
+        parsedList.push({
+          date: String(rawDate || `แถวที่ ${r + 1}`),
+          day: '—',
+          dayShort: '—',
+          md: rawMd,
+          fmo: rawFmo,
+          gso: rawGso,
+          isValid: false,
+          error: 'รูปแบบวันที่ไม่ถูกต้อง'
+        })
+        continue
+      }
+
+      const { day, dayShort } = getDayNames(isoDate)
+      const hasPersonnel = rawMd || rawFmo || rawGso
+      parsedList.push({
+        date: isoDate,
+        day,
+        dayShort,
+        md: rawMd,
+        fmo: rawFmo,
+        gso: rawGso,
+        isValid: true,
+        error: !hasPersonnel ? 'ไม่มีรายชื่อผู้เข้าเวร' : undefined
+      })
+    }
+
+    if (!parsedList.length) {
+      importError.value = 'ไม่พบข้อมูลตารางเวรในไฟล์ที่เลือก'
+      return
+    }
+
+    importRows.value = parsedList
+  } catch (err: any) {
+    console.error('Error parsing excel file', err)
+    importError.value = `เกิดข้อผิดพลาดในการอ่านไฟล์: ${err?.message || 'ไฟล์อาจไม่ถูกต้อง'}`
+  }
+}
+
+const confirmImport = () => {
+  if (!data.value) return
+  const validRows = importRows.value.filter((r) => r.isValid)
+  if (!validRows.length) return
+
+  let addedCount = 0
+  let updatedCount = 0
+
+  validRows.forEach((r) => {
+    const existing = data.value!.schedule.find((s) => s.date === r.date)
+    if (existing) {
+      if (overwriteExisting.value) {
+        if (r.md) { existing.md = r.md; existing.mdCode = generatePersonCode(r.md) }
+        if (r.fmo) { existing.fmo = r.fmo; existing.fmoCode = generatePersonCode(r.fmo) }
+        if (r.gso) { existing.gso = r.gso; existing.gsoCode = generatePersonCode(r.gso) }
+        updatedCount++
+      }
+    } else {
+      data.value!.schedule.push({
+        date: r.date,
+        day: r.day,
+        dayShort: r.dayShort,
+        md: r.md,
+        mdCode: generatePersonCode(r.md),
+        fmo: r.fmo,
+        fmoCode: generatePersonCode(r.fmo),
+        gso: r.gso,
+        gsoCode: generatePersonCode(r.gso),
+        note: ''
+      })
+      addedCount++
+    }
+  })
+
+  data.value.schedule.sort((a, b) => a.date.localeCompare(b.date))
+
+  const octDuties = data.value.schedule.filter((s) => s.date.startsWith('2026-10-')).length
+  if (octDuties > 0) {
+    data.value.summary.duties = octDuties
+  }
+
+  try {
+    localStorage.setItem('satops_custom_schedule', JSON.stringify(data.value.schedule))
+  } catch (e) {
+    console.error('LocalStorage save error', e)
+  }
+
+  const totalProcessed = addedCount + updatedCount
+  showToast(`นำเข้าตารางเวรสำเร็จ ${totalProcessed} วัน (เพิ่มใหม่ ${addedCount}, อัปเดต ${updatedCount})`)
+  showImportModal.value = false
+}
+
+const exportSchedule = () => {
+  if (!data.value) return
+  const exportData = data.value.schedule.map((row) => ({
+    'วันที่': row.date,
+    'วัน': row.day,
+    'MD': row.md,
+    'FMO': row.fmo,
+    'GSO': row.gso,
+    'หมายเหตุ': row.note || ''
+  }))
+  const ws = XLSX.utils.json_to_sheet(exportData)
+  ws['!cols'] = [{ wch: 15 }, { wch: 12 }, { wch: 28 }, { wch: 28 }, { wch: 28 }, { wch: 20 }]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'ตารางเวร')
+  XLSX.writeFile(wb, `ตารางเวร_SATOPS_${calendarYear.value}_${String(calendarMonth.value).padStart(2, '0')}.xlsx`)
+}
+
 const fillRandomMonthData = (dashboard: DashboardData) => {
   const personnelPool = [...new Set(dashboard.schedule.flatMap((row) => [row.md, row.fmo, row.gso]).filter(Boolean))]
   const secondRoleOffset = Math.ceil(personnelPool.length / 3)
@@ -263,6 +604,19 @@ watch(activeNav, () => { search.value = '' })
 onMounted(async () => {
   const dashboard: DashboardData = await (await fetch('/data/mock-data.json')).json()
   fillRandomMonthData(dashboard)
+
+  try {
+    const saved = localStorage.getItem('satops_custom_schedule')
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        dashboard.schedule = parsed
+      }
+    }
+  } catch (e) {
+    console.error('Error loading saved schedule from localStorage', e)
+  }
+
   data.value = dashboard
 })
 </script>
@@ -272,7 +626,7 @@ onMounted(async () => {
     <aside class="sidebar">
       <div class="brand-lockup"><div class="brand-mark"><span>✦</span></div><div><p class="brand-title">SATOPS</p><p class="brand-subtitle">DUTY CONTROL</p></div></div>
       <div class="sidebar-section-label">เมนูหลัก</div>
-      <nav class="main-nav" aria-label="เมนูหลัก"><button v-for="item in ['ภาพรวม', 'ตารางเวร', 'บุคลากร', 'วันหยุด/วันลา/วันจำหน่าย', 'สถิติ']" :key="item" :class="['nav-item', { active: activeNav === item }]" @click="activeNav = item"><span class="nav-icon">{{ { 'ภาพรวม': '⌂', 'ตารางเวร': '▤', 'บุคลากร': '♙', 'วันหยุด/วันลา/วันจำหน่าย': '▦', 'สถิติ': '▥' }[item] }}</span>{{ item }}</button></nav>
+      <nav class="main-nav" aria-label="เมนูหลัก"><button v-for="item in ['ภาพรวม', 'ตารางเวร', 'บุคลากร', 'สถิติ']" :key="item" :class="['nav-item', { active: activeNav === item }]" @click="activeNav = item"><span class="nav-icon">{{ { 'ภาพรวม': '⌂', 'ตารางเวร': '▤', 'บุคลากร': '♙', 'สถิติ': '▥' }[item] }}</span>{{ item }}</button></nav>
       <div class="sidebar-section-label system-label">ระบบ</div>
       <nav class="main-nav"><button v-for="item in ['ประวัติการแก้ไข', 'ผู้ใช้งาน', 'ตั้งค่า']" :key="item" :class="['nav-item', { active: activeNav === item }]" @click="activeNav = item"><span class="nav-icon">{{ { 'ประวัติการแก้ไข': '⌁', 'ผู้ใช้งาน': '♧', 'ตั้งค่า': '⚙' }[item] }}</span>{{ item }}</button></nav>
       <div class="sidebar-footer"><div class="secure-indicator"><span></span> ระบบปฏิบัติการปกติ</div><div class="sidebar-version">SATOPS v1.0.0 · DEMO DATA</div></div>
@@ -310,14 +664,25 @@ onMounted(async () => {
         </section>
       </div>
 
-      <!-- 3. หน้าวันหยุด / วันลา / วันจำหน่าย -->
-      <div v-else-if="activeNav === 'วันหยุด/วันลา/วันจำหน่าย'" class="page-content holiday-page-content">
+      <!-- 3. หน้าวันหยุด / วันลา / วันจำหน่าย (ซ่อนไว้ชั่วคราว) -->
+      <div v-else-if="false && activeNav === 'วันหยุด/วันลา/วันจำหน่าย'" class="page-content holiday-page-content">
         <HolidayView :personnelList="data?.personnel" />
       </div>
 
       <!-- 4. หน้าตารางเวร (Monthly Schedule) -->
       <div v-else class="page-content">
-        <section class="page-heading"><div><p class="eyebrow">ศูนย์ควบคุมการปฏิบัติงาน / 01</p><h1>ตารางเวรปฏิบัติงาน</h1><p class="heading-note">จัดการและติดตามกำลังพลประจำเวรประจำเดือน</p></div><div class="heading-actions"><button class="button button-secondary">⇩ <span>ส่งออก</span></button><button class="button button-primary" @click="openDutyForm()">＋ เพิ่มเวร</button></div></section>
+        <section class="page-heading">
+          <div>
+            <p class="eyebrow">ศูนย์ควบคุมการปฏิบัติงาน / 01</p>
+            <h1>ตารางเวรปฏิบัติงาน</h1>
+            <p class="heading-note">จัดการและติดตามกำลังพลประจำเวรประจำเดือน</p>
+          </div>
+          <div class="heading-actions">
+            <button class="button button-secondary" @click="exportSchedule">⇩ <span>ส่งออก</span></button>
+            <button class="button button-import" @click="openImportModal">⇧ <span>Import ตารางเวร</span></button>
+            <button class="button button-primary" @click="openDutyForm()">＋ เพิ่มเวร</button>
+          </div>
+        </section>
         <section class="metric-grid"><article class="metric-card"><span class="metric-icon blue">♙</span><div><small>บุคลากรทั้งหมด</small><strong>{{ data.summary.personnel }}</strong><p><b>+2</b> จากเดือนที่แล้ว</p></div></article><article class="metric-card"><span class="metric-icon amber">▤</span><div><small>เวรเดือนนี้</small><strong>{{ data.summary.duties }}</strong><p>จากทั้งหมด 31 วัน</p></div></article><article class="metric-card"><span class="metric-icon green">✓</span><div><small>กำลังพลพร้อมเวร</small><strong>{{ data.summary.personnel - data.summary.unavailable }}</strong><p><b>87.5%</b> ของกำลังพล</p></div></article><article class="metric-card alert-card"><span class="metric-icon red">!</span><div><small>ไม่พร้อมปฏิบัติงาน</small><strong>{{ data.summary.unavailable }}</strong><p class="alert-text">ต้องตรวจสอบ</p></div></article></section>
         <section class="schedule-panel"><div class="panel-heading"><div><div class="title-line"><h2>ตารางเวรประจำเดือน</h2><span class="status-badge"><i></i> อยู่ระหว่างตรวจสอบ</span></div><p>แสดงข้อมูลประจำเดือน {{ monthLabel }} · ข้อมูลล่าสุด 18 ก.ย. 2569, 09:42 น.</p></div><div class="month-switcher"><button aria-label="เดือนก่อนหน้า">‹</button><span>{{ monthLabel }}</span><button aria-label="เดือนถัดไป">›</button></div></div><div class="table-toolbar"><div class="toolbar-filters"><button :class="['filter-button', { active: dayFilter === 'all' }]" @click="dayFilter = 'all'">ดูทั้งหมด</button><button :class="['filter-button', { active: dayFilter === 'workday' }]" @click="dayFilter = 'workday'">วันทำงาน จ-ศ</button><button :class="['filter-button', { active: dayFilter === 'holiday' }]" @click="dayFilter = 'holiday'">วันหยุด / วันหยุดราชการ</button></div><div class="table-meta"><span class="legend-dot weekday"></span> วันปกติ <span class="legend-dot weekend"></span> วันหยุด <span class="legend-dot holiday"></span> วันหยุดราชการ</div></div>
           <div class="schedule-table-wrap"><table class="schedule-table"><thead><tr><th class="day-column">วัน</th><th class="date-column">วันที่ / เดือน / ปี <span>↕</span></th><th class="role-header md-header"><span class="role-code">MD</span></th><th class="role-header fmo-header"><span class="role-code">FMO</span></th><th class="role-header gso-header"><span class="role-code">GSO</span></th><th class="note-column">หมายเหตุ</th></tr></thead><tbody><tr v-for="row in visibleSchedule" :key="row.date" :class="dayClass(row)" @click="selectedRow = row"><td class="day-cell"><span>{{ row.day }}</span><small>{{ row.dayShort }}</small></td><td class="date-cell"><span>{{ formatThaiDate(row.date) }}</span></td><td class="person-cell" @click.stop="openPerson(row.md)"><span class="person-avatar md-avatar">{{ row.mdCode }}</span><span>{{ shortPersonnelName(row.md) }}</span></td><td class="person-cell" @click.stop="openPerson(row.fmo)"><span class="person-avatar fmo-avatar">{{ row.fmoCode }}</span><span>{{ shortPersonnelName(row.fmo) }}</span></td><td class="person-cell" @click.stop="openPerson(row.gso)"><span class="person-avatar gso-avatar">{{ row.gsoCode }}</span><span>{{ shortPersonnelName(row.gso) }}</span></td><td class="note-cell"><span v-if="row.note" :class="{ holiday: row.note.includes('ราชการ') }">{{ row.note }}</span><span v-else class="empty-note">—</span></td></tr></tbody></table><div v-if="!visibleSchedule.length" class="empty-table">ไม่พบข้อมูลที่ตรงกับคำค้นหา</div></div><div class="table-footer"><span>แสดง {{ visibleSchedule.length }} จาก 31 วัน</span><div class="pagination"><button>‹</button><button class="selected-page">1</button><button>2</button><button>3</button><span>...</span><button>4</button><button>›</button></div><span>หน้า 1 จาก 4</span></div></section>
@@ -332,6 +697,143 @@ onMounted(async () => {
 
     <!-- Modal เพิ่ม/แก้ไขเวร -->
     <div v-if="showDutyForm" class="modal-backdrop" @click.self="showDutyForm = false"><section class="duty-form-modal"><button class="modal-close" @click="showDutyForm = false">×</button><p class="eyebrow">ตารางเวร / เพิ่มหรือแก้ไข</p><h2>กำหนดผู้ปฏิบัติหน้าที่</h2><p class="form-range-note">แสดงและจัดเวรเฉพาะวันที่ 1 - 10 ตุลาคม 2569</p><label class="form-label">วันที่ปฏิบัติงาน</label><div class="calendar-picker"><div class="calendar-header"><button>‹</button><strong>ตุลาคม 2569</strong><button>›</button></div><div class="calendar-weekdays"><span>อา.</span><span>จ.</span><span>อ.</span><span>พ.</span><span>พฤ.</span><span>ศ.</span><span>ส.</span></div><div class="calendar-grid"><button v-for="(date, index) in calendarDays" :key="date ?? `empty-${index}`" :disabled="!date" :class="{ selected: dutyDate === date, assigned: date && data.schedule.some((row) => row.date === date) }" @click="date && (dutyDate = date)">{{ date ? Number(date.slice(-2)) : '' }}</button></div></div><div class="assignment-grid"><div class="assignment-field"><label><span class="role-label md-label">MD</span> Mission Director</label><input v-model="personnelSearch.md" placeholder="ค้นหา หรือเลือกบุคลากร" /><select v-model="dutyMd"><option disabled value="">เลือกบุคลากร</option><option v-for="person in filteredPersonnel('md')" :key="`md-${person}`" :value="person">{{ shortPersonnelName(person) }}</option></select></div><div class="assignment-field"><label><span class="role-label fmo-label">FMO</span> Flight &amp; Mission Ops.</label><input v-model="personnelSearch.fmo" placeholder="ค้นหา หรือเลือกบุคลากร" /><select v-model="dutyFmo"><option disabled value="">เลือกบุคลากร</option><option v-for="person in filteredPersonnel('fmo')" :key="`fmo-${person}`" :value="person">{{ shortPersonnelName(person) }}</option></select></div><div class="assignment-field"><label><span class="role-label gso-label">GSO</span> Ground Station Ops.</label><input v-model="personnelSearch.gso" placeholder="ค้นหา หรือเลือกบุคลากร" /><select v-model="dutyGso"><option disabled value="">เลือกบุคลากร</option><option v-for="person in filteredPersonnel('gso')" :key="`gso-${person}`" :value="person">{{ shortPersonnelName(person) }}</option></select></div></div><label class="form-label note-label">หมายเหตุ</label><textarea v-model="dutyNote" rows="3" placeholder="เพิ่มหมายเหตุสำหรับวันนี้"></textarea><div class="form-actions"><button class="button button-secondary" @click="showDutyForm = false">ยกเลิก</button><button class="button button-primary" :disabled="!dutyMd || !dutyFmo || !dutyGso" @click="saveDuty">บันทึกเวร</button></div></section></div>
+
+    <!-- Toast แจ้งเตือนความสำเร็จ -->
+    <div v-if="toastMessage" class="app-toast">
+      <span>✓</span> {{ toastMessage }}
+    </div>
+
+    <!-- Modal นำเข้าตารางเวร (Import Excel) -->
+    <div v-if="showImportModal" class="modal-backdrop" @click.self="showImportModal = false">
+      <section class="import-modal">
+        <button class="modal-close" @click="showImportModal = false">×</button>
+        <p class="eyebrow">ระบบนำเข้าข้อมูล / EXCEL</p>
+        <h2>นำเข้าตารางเวรปฏิบัติงาน</h2>
+        <p class="import-subtitle">
+          นำเข้าตารางเวรจากไฟล์ Excel (.xlsx / .xls) แบบฟอร์ม 4 คอลัมน์ตายตัว: วันที่, MD, FMO, GSO
+        </p>
+
+        <!-- แถบดาวน์โหลดฟอร์มตัวอย่าง -->
+        <div class="template-download-strip">
+          <div class="template-info">
+            <span class="excel-badge-icon">📊</span>
+            <div>
+              <strong>ไฟล์ฟอร์มมาตรฐาน 4 ช่อง</strong>
+              <small>คอลัมน์: [วันที่] [MD] [FMO] [GSO]</small>
+            </div>
+          </div>
+          <a
+            href="/duty_roster_template.xlsx"
+            download="duty_roster_template.xlsx"
+            class="button-download-template"
+            title="ดาวน์โหลดไฟล์ Excel ตัวอย่าง 4 ช่องเพื่อนำไปกรอกข้อมูล"
+          >
+            📥 ดาวน์โหลดฟอร์มตัวอย่าง (.xlsx)
+          </a>
+        </div>
+
+        <!-- กล่องอัปโหลด / ลากวางไฟล์ -->
+        <div
+          class="upload-dropzone"
+          :class="{ 'is-dragging': isDragging }"
+          @dragover.prevent="isDragging = true"
+          @dragleave.prevent="isDragging = false"
+          @drop.prevent="handleFileDrop"
+          @click="triggerFileInput"
+        >
+          <input
+            ref="excelFileInput"
+            type="file"
+            accept=".xlsx, .xls, .csv"
+            style="display: none;"
+            @change="handleFileInputChange"
+          />
+          <div v-if="!importFileName" class="dropzone-content">
+            <span class="upload-cloud-icon">☁️</span>
+            <strong>คลิกเพื่อเลือกไฟล์ Excel หรือลากไฟล์มาวางที่นี่</strong>
+            <p>รองรับไฟล์ .xlsx, .xls หรือ .csv (ใช้ไฟล์ <code>duty_roster_template.xlsx</code> ที่อยู่ในโฟลเดอร์นี้ได้ทันที)</p>
+          </div>
+          <div v-else class="dropzone-file-selected">
+            <span class="file-icon-green">📊</span>
+            <div class="file-meta">
+              <strong>{{ importFileName }}</strong>
+              <small v-if="importRows.length">อ่านข้อมูลพบ {{ importRows.length }} รายการ (ผ่านเกณฑ์ {{ validImportRows.length }} วัน)</small>
+            </div>
+            <button type="button" class="btn-change-file" @click.stop="triggerFileInput">
+              เปลี่ยนไฟล์
+            </button>
+          </div>
+        </div>
+
+        <!-- แจ้งเตือนข้อผิดพลาด (ถ้ามี) -->
+        <div v-if="importError" class="import-alert-error">
+          ⚠️ {{ importError }}
+        </div>
+
+        <!-- ตาราง Preview ข้อมูลที่อ่านได้ -->
+        <div v-if="importRows.length > 0" class="import-preview-box">
+          <div class="preview-header">
+            <div class="preview-title">
+              <strong>ตรวจสอบข้อมูลก่อนนำเข้า</strong>
+              <span class="badge-success">✓ พร้อมนำเข้า {{ validImportRows.length }} วัน</span>
+              <span v-if="invalidImportRows.length" class="badge-warning">⚠️ ไม่สมบูรณ์ {{ invalidImportRows.length }} แถว</span>
+            </div>
+            <label class="checkbox-overwrite">
+              <input v-model="overwriteExisting" type="checkbox" />
+              <span>เขียนทับวันที่มีข้อมูลอยู่แล้วในระบบ</span>
+            </label>
+          </div>
+
+          <div class="preview-table-wrap">
+            <table class="preview-table">
+              <thead>
+                <tr>
+                  <th style="width: 50px; text-align: center;">ลำดับ</th>
+                  <th style="width: 120px;">วันที่</th>
+                  <th style="width: 80px;">วัน</th>
+                  <th>MD (Mission Director)</th>
+                  <th>FMO (Flight Ops.)</th>
+                  <th>GSO (Ground Station)</th>
+                  <th style="width: 90px; text-align: center;">สถานะ</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(row, idx) in importRows"
+                  :key="idx"
+                  :class="{ 'row-invalid': !row.isValid }"
+                >
+                  <td class="text-center">{{ idx + 1 }}</td>
+                  <td><strong>{{ formatThaiDate(row.date) || row.date }}</strong></td>
+                  <td><span class="preview-day-tag">{{ row.day }}</span></td>
+                  <td><span class="preview-person md">{{ row.md || '—' }}</span></td>
+                  <td><span class="preview-person fmo">{{ row.fmo || '—' }}</span></td>
+                  <td><span class="preview-person gso">{{ row.gso || '—' }}</span></td>
+                  <td class="text-center">
+                    <span v-if="row.isValid" class="status-valid-badge">✓ พร้อม</span>
+                    <span v-else class="status-error-badge" :title="row.error">✕ {{ row.error || 'ผิดพลาด' }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ปุ่มดำเนินการ -->
+        <div class="form-actions">
+          <button class="button button-secondary" @click="showImportModal = false">
+            ยกเลิก
+          </button>
+          <button
+            class="button button-import"
+            :disabled="validImportRows.length === 0"
+            @click="confirmImport"
+          >
+            บันทึกนำเข้าตารางเวร ({{ validImportRows.length }} วัน)
+          </button>
+        </div>
+      </section>
+    </div>
   </div>
   <div v-else class="loading-state"><span class="loader"></span> กำลังโหลดข้อมูลระบบ...</div>
 </template>

@@ -142,3 +142,279 @@
 @media (max-width: 1000px) { .statistics-summary { grid-template-columns: repeat(2, 1fr); }.statistics-toolbar { align-items: stretch; flex-wrap: wrap; }.statistics-search { flex-basis: 100%; }.statistic-field { flex: 1; } }
 @media (max-width: 720px) { .statistics-heading { align-items: flex-start; gap: 18px; }.statistics-period-note { min-width: 0; }.statistics-summary { grid-template-columns: 1fr 1fr; }.statistics-summary article { padding: 14px; }.statistics-summary .summary-icon { display: none; }.statistics-panel-head { align-items: flex-start; gap: 10px; }.statistic-field { min-width: 145px; }.modern-select-trigger { min-width: 145px; }.modern-select-menu { left: 0; right: auto; width: min(265px, calc(100vw - 54px)); }.statistics-footer { gap: 10px; }.position-legend { display: none; } }
 @media (prefers-reduced-motion: reduce) { .statistics-summary article { transition: none; }.modern-select-menu { animation: none; }.modern-select-trigger b { transition: none; } }
+
+/* Import Excel Modal & Buttons */
+.button-import {
+  background: #0f766e;
+  color: #fff;
+  border: 1px solid #0d6b63;
+  box-shadow: 0 3px 8px rgba(15, 118, 110, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.button-import:hover {
+  background: #115e59;
+}
+.button-download-template {
+  background: #ffffff;
+  color: #0f766e;
+  border: 1px solid #99f6e4;
+  text-decoration: none;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-weight: 600;
+  transition: all 0.15s;
+}
+.button-download-template:hover {
+  background: #f0fdfa;
+  border-color: #5eead4;
+}
+.import-modal {
+  width: min(840px, 100%);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: #fff;
+  box-shadow: 0 20px 50px #102a4350;
+  padding: 28px 30px;
+  position: relative;
+  border-radius: 8px;
+}
+.import-subtitle {
+  color: #64748b;
+  font-size: 13px;
+  margin: -14px 0 18px;
+}
+.template-download-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: #f0fdfa;
+  border: 1px solid #ccfbf1;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.template-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.excel-badge-icon {
+  font-size: 24px;
+}
+.template-info strong {
+  display: block;
+  font-size: 13px;
+  color: #0f766e;
+}
+.template-info small {
+  color: #134e4a;
+  font-size: 11px;
+}
+.upload-dropzone {
+  border: 2px dashed #cbd5e1;
+  border-radius: 8px;
+  padding: 26px 20px;
+  text-align: center;
+  background: #f8fafc;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 16px;
+}
+.upload-dropzone:hover, .upload-dropzone.is-dragging {
+  border-color: #0f766e;
+  background: #f0fdfa;
+}
+.upload-cloud-icon {
+  font-size: 32px;
+  display: block;
+  margin-bottom: 8px;
+}
+.dropzone-content strong {
+  display: block;
+  font-size: 14px;
+  color: #1e293b;
+  margin-bottom: 4px;
+}
+.dropzone-content p {
+  margin: 0;
+  font-size: 11.5px;
+  color: #64748b;
+}
+.dropzone-file-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.file-icon-green {
+  font-size: 28px;
+}
+.file-meta {
+  text-align: left;
+  flex: 1;
+}
+.file-meta strong {
+  display: block;
+  font-size: 14px;
+  color: #0f172a;
+}
+.file-meta small {
+  color: #0f766e;
+  font-weight: 600;
+  font-size: 11.5px;
+}
+.btn-change-file {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-change-file:hover {
+  background: #f1f5f9;
+}
+.import-alert-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+.import-preview-box {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.preview-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.preview-title strong {
+  font-size: 13px;
+  color: #1e293b;
+}
+.badge-success {
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+.badge-warning {
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+.checkbox-overwrite {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475569;
+  cursor: pointer;
+}
+.preview-table-wrap {
+  max-height: 280px;
+  overflow-y: auto;
+}
+.preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+.preview-table th {
+  background: #f1f5f9;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #475569;
+  font-weight: 600;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.preview-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  vertical-align: middle;
+}
+.preview-table tr.row-invalid {
+  background: #fff5f5;
+  color: #991b1b;
+}
+.preview-day-tag {
+  background: #f1f5f9;
+  color: #475569;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.preview-person {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.preview-person.md { color: #2563eb; }
+.preview-person.fmo { color: #d97706; }
+.preview-person.gso { color: #16a34a; }
+.status-valid-badge {
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 700;
+}
+.status-error-badge {
+  color: #b91c1c;
+  font-size: 11px;
+  font-weight: 700;
+}
+.app-toast {
+  position: fixed;
+  top: 24px;
+  right: 32px;
+  z-index: 9999;
+  background: #0f766e;
+  color: #ffffff;
+  padding: 12px 20px;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(15, 118, 110, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  animation: slideDown 0.25s ease-out;
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
