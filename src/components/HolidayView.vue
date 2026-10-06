@@ -224,7 +224,7 @@ const LEAVE_TYPE_CONFIG: Record<
 > = {
   vacation: {
     label: 'วันลาพักผ่อน',
-    shortLabel: 'ลาพักผ่อน',
+    shortLabel: 'พักผ่อน',
     color: '#0f766e',
     bgLight: '#f0fdfa',
     border: '#ccfbf1',
@@ -315,7 +315,7 @@ const selectedRosterDate = ref('2026-10-01')
 const miniYear = ref(2026)
 const miniMonth = ref(10)
 
-const isSidebarOpen = ref(true)
+const isSidebarOpen = ref(typeof window !== 'undefined' ? window.innerWidth >= 1200 : true)
 
 // ==========================================
 // 5. Filters (ค้นหา & หมวดหมู่วันหยุด)
@@ -887,53 +887,63 @@ const getOfficerInitials = (name: string) => {
   }
   return name.slice(0, 2)
 }
+
+const formatPillName = (leave: PersonnelLeaveRecord) => {
+  const clean = leave.personnelName.replace(/^(พ\.อ\.|น\.อ\.|ร\.ต\.หญิง|ร\.ต\.|จ\.ส\.อ\.|พ\.ท\.|พ\.ต\.|น\.ท\.|น\.ต\.)\s*/, '')
+  const firstName = clean.split(/\s+/)[0] || clean
+  return `${firstName} (${LEAVE_TYPE_CONFIG[leave.type].shortLabel})`
+}
 </script>
 
 <template>
   <div class="google-calendar-app">
-    <!-- แถบด้านบนแบบ Google Calendar (Top Navigation Bar) -->
+    <!-- แถบด้านบนแบบ Google Calendar (Top Navigation Bar - Responsive) -->
     <header class="gcal-topbar">
-      <div class="topbar-left">
-        <!-- ปุ่มเปิด/ปิด Sidebar (Hamburger) -->
-        <button
-          class="icon-btn hamburger-btn"
-          title="แถบเมนูหลัก"
-          aria-label="สลับแถบด้านข้าง"
-          @click="isSidebarOpen = !isSidebarOpen"
-        >
-          <span class="hamburger-line"></span>
-          <span class="hamburger-line"></span>
-          <span class="hamburger-line"></span>
-        </button>
+      <!-- แถวที่ 1: แบรนด์และตัวเลื่อนเดือน (Brand & Period Navigation) -->
+      <div class="topbar-main-row">
+        <div class="brand-group">
+          <!-- ปุ่มเปิด/ปิด Sidebar (Hamburger) -->
+          <button
+            class="icon-btn hamburger-btn"
+            title="สลับแสดง/ซ่อนแถบด้านข้าง"
+            aria-label="สลับแถบด้านข้าง"
+            @click="isSidebarOpen = !isSidebarOpen"
+          >
+            <span class="hamburger-line"></span>
+            <span class="hamburger-line"></span>
+            <span class="hamburger-line"></span>
+          </button>
 
-        <!-- โลโก้ปฏิทิน Google Style -->
-        <div class="gcal-brand">
-          <div class="gcal-logo-icon">
-            <span class="logo-month">ต.ค.</span>
-            <span class="logo-day">{{ currentDay }}</span>
-          </div>
-          <div class="brand-text">
-            <h2>ปฏิทินวันหยุด / วันลา / วันจำหน่าย</h2>
-            <span class="brand-sub">{{ liveTimeString }}</span>
+          <!-- โลโก้ปฏิทิน Google Style -->
+          <div class="gcal-brand">
+            <div class="gcal-logo-icon">
+              <span class="logo-month">ต.ค.</span>
+              <span class="logo-day">{{ currentDay }}</span>
+            </div>
+            <div class="brand-text">
+              <h2>ปฏิทินวันหยุด / วันลา / วันจำหน่าย</h2>
+              <span class="brand-sub">{{ liveTimeString }}</span>
+            </div>
           </div>
         </div>
 
-        <!-- ปุ่มวันนี้ & ต.ค. 2569 -->
-        <button class="gcal-today-btn" @click="goToToday">วันนี้</button>
-        <button class="demo-period-btn" title="ไปที่เดือนตุลาคม 2569" @click="jumpToDemoMonth">
-          ต.ค. 2569
-        </button>
+        <div class="period-nav-group">
+          <button class="gcal-today-btn" @click="goToToday">วันนี้</button>
+          <button class="demo-period-btn" title="ไปที่เดือนตุลาคม 2569" @click="jumpToDemoMonth">
+            ต.ค. 2569
+          </button>
 
-        <!-- ลูกศรเลื่อนเดือน -->
-        <div class="nav-arrows">
-          <button class="icon-btn arrow-btn" title="ก่อนหน้า" @click="prevPeriod">‹</button>
-          <button class="icon-btn arrow-btn" title="ถัดไป" @click="nextPeriod">›</button>
+          <div class="nav-arrows">
+            <button class="icon-btn arrow-btn" title="ก่อนหน้า" @click="prevPeriod">‹</button>
+            <button class="icon-btn arrow-btn" title="ถัดไป" @click="nextPeriod">›</button>
+          </div>
+
+          <h3 class="period-title-text">{{ periodTitle }}</h3>
         </div>
-
-        <h3 class="period-title-text">{{ periodTitle }}</h3>
       </div>
 
-      <div class="topbar-right">
+      <!-- แถวที่ 2: เครื่องมือค้นหาและปุ่มจัดการ (Search & Actions) -->
+      <div class="topbar-actions-row">
         <!-- ช่องค้นหาวันหยุด -->
         <div class="gcal-search-box">
           <span class="search-icon">🔍</span>
@@ -951,12 +961,12 @@ const getOfficerInitials = (name: string) => {
           title="เปิด/ปิดการแสดงรายการคนลาบนช่องปฏิทิน"
           @click="showLeavesOnCalendar = !showLeavesOnCalendar"
         >
-          <span>{{ showLeavesOnCalendar ? '👁️ กำลังแสดงวันลาบนปฏิทิน' : '👁️ ซ่อนวันลา (ดูเฉพาะวันหยุด)' }}</span>
+          <span>{{ showLeavesOnCalendar ? '👁️ แสดงวันลาบนปฏิทิน' : '👁️ ซ่อนวันลา' }}</span>
         </button>
 
         <!-- ปุ่มด่วน: เพิ่มคนลาในวันที่เลือก -->
         <button class="btn-quick-add-leave" @click="openAddLeaveForDate()">
-          <span>＋</span> เพิ่มคนลาวันนั้นๆ
+          <span>＋</span> เพิ่มคนลา
         </button>
       </div>
     </header>
@@ -1086,8 +1096,8 @@ const getOfficerInitials = (name: string) => {
                 <span :class="['date-number-bubble', { 'today-bubble': cell.isToday, 'selected-bubble': cell.isSelectedRosterDate }]">
                   {{ cell.dayNumber }}
                 </span>
-                <span v-if="cell.leaves.length > 0 || cell.holidays.length > 0" class="cell-event-count">
-                  {{ cell.holidays.length + (showLeavesOnCalendar ? cell.leaves.length : 0) }} รายการ
+                <span v-if="cell.leaves.length > 0 || cell.holidays.length > 0" class="cell-event-count" :title="`มี ${cell.holidays.length + (showLeavesOnCalendar ? cell.leaves.length : 0)} รายการในวันนี้`">
+                  {{ cell.holidays.length + (showLeavesOnCalendar ? cell.leaves.length : 0) }}
                 </span>
               </div>
 
@@ -1107,7 +1117,7 @@ const getOfficerInitials = (name: string) => {
                   @click.stop="openViewHolidayModal(h)"
                 >
                   <span class="pill-emoji">{{ h.icon || '🏛️' }}</span>
-                  <span class="pill-name">{{ h.name }}</span>
+                  <span class="pill-name"><b>{{ h.name }}</b></span>
                 </div>
 
                 <!-- 2. แสดงรายการคนลาแบบแยกชิปชัดเจน (Google Calendar Style) -->
@@ -1126,10 +1136,7 @@ const getOfficerInitials = (name: string) => {
                     @click.stop="openEditLeaveModal(leave)"
                   >
                     <span class="pill-emoji">{{ LEAVE_TYPE_CONFIG[leave.type].icon }}</span>
-                    <span class="pill-name">
-                      <b>{{ getShortName(leave.personnelName) }}</b>
-                      <small class="leave-type-tag">({{ LEAVE_TYPE_CONFIG[leave.type].shortLabel }})</small>
-                    </span>
+                    <span class="pill-name"><b>{{ formatPillName(leave) }}</b></span>
                   </div>
 
                   <!-- หากมีรายการมากกว่าที่แสดง ให้ปุ่มกดดูรายการเพิ่มเติม -->
@@ -1140,7 +1147,7 @@ const getOfficerInitials = (name: string) => {
                     @click.stop="handleSelectCalendarDay(cell)"
                   >
                     <span class="pill-name">
-                      +{{ cell.leaves.length - (cell.holidays.length > 0 ? 1 : 2) }} เพิ่มเติม...
+                      +{{ cell.leaves.length - (cell.holidays.length > 0 ? 1 : 2) }} เพิ่มเติม
                     </span>
                   </div>
                 </template>
@@ -1960,34 +1967,44 @@ const getOfficerInitials = (name: string) => {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   display: flex;
   flex-direction: column;
-  min-height: 800px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 /* ========================================================
-   TOPBAR
+   TOPBAR (RESPONSIVE TWO-TIER / ROW)
    ======================================================== */
 .gcal-topbar {
-  min-height: 64px;
-  padding: 8px 18px;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid var(--gcal-gray-border);
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.topbar-main-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--gcal-gray-border);
-  background: #ffffff;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
+  width: 100%;
 }
 
-.topbar-left, .topbar-right {
+.brand-group {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
 }
 
 .hamburger-btn {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -1998,6 +2015,7 @@ const getOfficerInitials = (name: string) => {
   background: transparent;
   cursor: pointer;
   padding: 0;
+  flex-shrink: 0;
 }
 .hamburger-btn:hover { background: var(--gcal-gray-light); }
 .hamburger-line { width: 18px; height: 2px; background: var(--gcal-gray-sub); border-radius: 1px; }
@@ -2006,7 +2024,6 @@ const getOfficerInitials = (name: string) => {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-right: 6px;
 }
 
 .gcal-logo-icon {
@@ -2020,20 +2037,28 @@ const getOfficerInitials = (name: string) => {
   justify-content: center;
   background: #ffffff;
   box-shadow: 0 2px 4px rgba(26,115,232,0.15);
+  flex-shrink: 0;
 }
 .logo-month { font-size: 8px; font-weight: 700; color: #ffffff; background: var(--gcal-blue); width: 100%; text-align: center; border-radius: 4px 4px 0 0; }
 .logo-day { font-size: 14px; font-weight: 800; color: var(--gcal-blue); line-height: 1.1; }
 
-.brand-text h2 { margin: 0; font-size: 17px; font-weight: 600; color: #202124; letter-spacing: -0.3px; }
+.brand-text h2 { margin: 0; font-size: 16px; font-weight: 600; color: #202124; letter-spacing: -0.3px; }
 .brand-sub { font-size: 10px; font-weight: 500; color: var(--gcal-gray-sub); }
+
+.period-nav-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 .gcal-today-btn {
   border: 1px solid var(--gcal-gray-border);
   background: #ffffff;
   color: var(--gcal-gray-text);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
-  padding: 6px 14px;
+  padding: 6px 12px;
   border-radius: 4px;
   cursor: pointer;
 }
@@ -2053,8 +2078,8 @@ const getOfficerInitials = (name: string) => {
 
 .nav-arrows { display: flex; align-items: center; gap: 2px; }
 .arrow-btn {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   border: none;
   background: transparent;
@@ -2067,11 +2092,19 @@ const getOfficerInitials = (name: string) => {
 .arrow-btn:hover { background: var(--gcal-gray-light); }
 
 .period-title-text {
-  font-size: 17px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 600;
   color: #202124;
-  margin: 0 0 0 4px;
+  margin: 0;
   white-space: nowrap;
+}
+
+.topbar-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  flex-wrap: wrap;
 }
 
 .gcal-search-box {
@@ -2079,9 +2112,10 @@ const getOfficerInitials = (name: string) => {
   align-items: center;
   background: var(--gcal-gray-light);
   border-radius: 8px;
-  padding: 6px 12px;
-  gap: 8px;
-  width: 170px;
+  padding: 6px 10px;
+  gap: 6px;
+  flex: 1;
+  min-width: 150px;
   border: 1px solid transparent;
 }
 .gcal-search-box input { border: none; background: transparent; outline: none; font-size: 12px; color: var(--gcal-gray-text); width: 100%; }
@@ -2096,6 +2130,7 @@ const getOfficerInitials = (name: string) => {
   padding: 6px 12px;
   border-radius: 20px;
   cursor: pointer;
+  white-space: nowrap;
   transition: all 0.15s;
 }
 .calendar-view-toggle-btn.active {
@@ -2105,86 +2140,118 @@ const getOfficerInitials = (name: string) => {
 }
 
 .btn-quick-add-leave {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
+  gap: 5px;
+  padding: 6px 14px;
   border-radius: 20px;
   border: none;
   background: #2563eb;
   color: #ffffff;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
   box-shadow: 0 1px 3px rgba(37,99,235,0.25);
   transition: all 0.15s;
 }
 .btn-quick-add-leave:hover { background: #1d4ed8; }
+
+/* Wide screen integration (>= 1350px) */
+@media (min-width: 1350px) {
+  .gcal-topbar {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 18px;
+  }
+  .topbar-main-row {
+    width: auto;
+    justify-content: flex-start;
+  }
+  .topbar-actions-row {
+    width: auto;
+    justify-content: flex-end;
+  }
+  .gcal-search-box {
+    flex: initial;
+    width: 170px;
+  }
+}
 
 /* ========================================================
    BODY LAYOUT (SIDEBAR + MAIN CALENDAR)
    ======================================================== */
 .gcal-body-layout {
   display: flex;
-  flex: 1;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border-bottom: 1px solid var(--gcal-gray-border);
+  overflow: hidden;
 }
 
 /* Sidebar */
 .gcal-sidebar {
-  width: 240px;
+  width: 220px;
   flex-shrink: 0;
   border-right: 1px solid var(--gcal-gray-border);
-  padding: 14px 12px;
+  padding: 12px 10px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   background: #ffffff;
+  box-sizing: border-box;
 }
 
 .sidebar-big-create-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 16px;
+  padding: 8px 14px;
   border-radius: 24px;
   border: 1px solid #dadce0;
   background: #ffffff;
   box-shadow: 0 1px 3px rgba(60,64,67,0.2);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   width: 100%;
 }
 .sidebar-big-create-btn:hover { background: #fafbfd; box-shadow: 0 2px 6px rgba(60,64,67,0.25); }
 .big-plus {
-  font-size: 17px;
+  font-size: 16px;
   background: linear-gradient(45deg, #ea4335, #4285f4, #34a853, #fbbc05);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
 /* Mini Calendar */
-.mini-calendar-wrap { padding-bottom: 10px; border-bottom: 1px solid var(--gcal-gray-border); }
-.mini-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; padding: 0 4px; }
-.mini-month-label { font-size: 12px; font-weight: 600; color: #202124; }
+.mini-calendar-wrap { padding-bottom: 8px; border-bottom: 1px solid var(--gcal-gray-border); }
+.mini-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; padding: 0 2px; }
+.mini-month-label { font-size: 11.5px; font-weight: 600; color: #202124; }
 .mini-nav { display: flex; gap: 2px; }
-.mini-nav-btn { border: none; background: transparent; color: var(--gcal-gray-sub); width: 22px; height: 22px; border-radius: 50%; cursor: pointer; }
+.mini-nav-btn { border: none; background: transparent; color: var(--gcal-gray-sub); width: 20px; height: 20px; border-radius: 50%; cursor: pointer; }
 .mini-nav-btn:hover { background: var(--gcal-gray-light); }
 
-.mini-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; text-align: center; }
-.mini-dow { font-size: 9.5px; font-weight: 600; color: var(--gcal-gray-sub); padding: 3px 0; }
+.mini-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px 1px; text-align: center; }
+.mini-dow { font-size: 9px; font-weight: 600; color: var(--gcal-gray-sub); padding: 2px 0; }
 .mini-day-cell {
   border: none;
   background: transparent;
   font-size: 10.5px;
   color: var(--gcal-gray-text);
+  width: 24px;
   height: 24px;
+  margin: 0 auto;
   border-radius: 50%;
   cursor: pointer;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   position: relative;
+  line-height: 1;
+  padding: 0;
 }
 .mini-day-cell:hover { background: var(--gcal-gray-light); }
 .mini-day-cell.other-month { color: #bdc1c6; }
@@ -2192,27 +2259,29 @@ const getOfficerInitials = (name: string) => {
   content: '';
   position: absolute;
   bottom: 2px;
-  width: 4px;
-  height: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
   background: var(--gcal-blue);
 }
 .mini-day-cell.selected { background: #d2e3fc; color: var(--gcal-blue); font-weight: 700; }
 
-.sidebar-section-header h4 { margin: 0 0 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--gcal-gray-sub); }
-.category-checkbox-list { display: flex; flex-direction: column; gap: 5px; }
-.category-checkbox-item { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--gcal-gray-text); cursor: pointer; }
-.cat-color-badge { width: 10px; height: 10px; border-radius: 3px; }
+.sidebar-section-header h4 { margin: 0 0 5px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; color: var(--gcal-gray-sub); }
+.category-checkbox-list { display: flex; flex-direction: column; gap: 4px; }
+.category-checkbox-item { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--gcal-gray-text); cursor: pointer; }
+.cat-color-badge { width: 9px; height: 9px; border-radius: 2px; }
 .cat-label-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.leave-legend-list { display: flex; flex-direction: column; gap: 5px; }
+.leave-legend-list { display: flex; flex-direction: column; gap: 4px; }
 .legend-color-tag {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  padding: 2px 7px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   border: 1px solid transparent;
 }
@@ -2222,22 +2291,44 @@ const getOfficerInitials = (name: string) => {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
-  padding: 10px;
+  padding: 8px;
 }
-.guide-title { font-size: 11px; font-weight: 700; color: #1e293b; margin-bottom: 4px; }
-.guide-text { font-size: 10.5px; color: #64748b; margin: 0; line-height: 1.4; }
+.guide-title { font-size: 10.5px; font-weight: 700; color: #1e293b; margin-bottom: 3px; }
+.guide-text { font-size: 10px; color: #64748b; margin: 0; line-height: 1.35; }
 
 /* Main Calendar (Clean Month Grid) */
-.gcal-main-content { flex: 1; display: flex; flex-direction: column; background: #ffffff; }
-.month-view-container { display: flex; flex-direction: column; flex: 1; }
-.month-header-row { display: grid; grid-template-columns: repeat(7, 1fr); border-bottom: 1px solid var(--gcal-gray-border); }
+.gcal-main-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.month-view-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  min-width: 600px;
+}
+.month-header-row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-bottom: 1px solid var(--gcal-gray-border);
+  background: #ffffff;
+}
 .month-dow-header {
   text-align: center;
-  padding: 8px 4px;
+  padding: 8px 2px;
   font-size: 11.5px;
   font-weight: 600;
   color: var(--gcal-gray-sub);
   border-right: 1px solid var(--gcal-gray-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .month-dow-header:last-child { border-right: none; }
 .month-dow-header.is-weekend { color: #d93025; }
@@ -2245,8 +2336,8 @@ const getOfficerInitials = (name: string) => {
 
 .month-cells-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  grid-auto-rows: minmax(105px, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-auto-rows: minmax(95px, 1fr);
   flex: 1;
 }
 
@@ -2256,9 +2347,12 @@ const getOfficerInitials = (name: string) => {
   padding: 4px;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
   cursor: pointer;
   transition: all 0.15s;
   background: #ffffff;
+  box-sizing: border-box;
 }
 .gcal-month-cell:nth-child(7n) { border-right: none; }
 .gcal-month-cell:hover { background: #f8fafd; }
@@ -2266,48 +2360,72 @@ const getOfficerInitials = (name: string) => {
 .gcal-month-cell.not-current-month .date-number-bubble { color: #9aa0a6; }
 .gcal-month-cell.is-selected-date { background: #eff6ff; box-shadow: inset 0 0 0 2px #3b82f6; }
 
-.cell-top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; }
+.cell-top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3px;
+  min-width: 0;
+}
 .date-number-bubble {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 700;
   color: var(--gcal-gray-text);
   width: 22px;
   height: 22px;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 .date-number-bubble.today-bubble { background: var(--gcal-blue); color: #ffffff; }
 .date-number-bubble.selected-bubble { background: #2563eb; color: #ffffff; }
-.cell-event-count { font-size: 9.5px; color: #64748b; font-weight: 600; }
+.cell-event-count {
+  font-size: 9.5px;
+  color: #64748b;
+  font-weight: 700;
+  background: #f1f5f9;
+  border-radius: 10px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
 
-.cell-events-list { display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
+.cell-events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  min-width: 0;
+}
 .gcal-event-pill {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 10.5px;
+  gap: 3px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
-  transition: transform 0.1s;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
-.gcal-event-pill:hover { transform: translateY(-1px); filter: brightness(0.96); }
+.gcal-event-pill:hover { filter: brightness(0.96); }
 .pill-emoji { font-size: 10px; flex-shrink: 0; }
-.pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.leave-type-tag { font-size: 9px; opacity: 0.85; margin-left: 2px; }
+.pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 
 .more-pill {
   background: #f1f5f9;
   color: #475569;
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 1px 5px;
+  padding: 1px 4px;
   border-radius: 3px;
+  text-align: center;
   justify-content: center;
 }
 .more-pill:hover { background: #e2e8f0; color: #1e293b; }
@@ -2532,11 +2650,14 @@ const getOfficerInitials = (name: string) => {
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  width: 100%;
 }
 
 .roster-data-table {
   width: 100%;
+  min-width: 860px;
   border-collapse: collapse;
   font-size: 12.5px;
   text-align: left;
@@ -3024,13 +3145,59 @@ const getOfficerInitials = (name: string) => {
 }
 .btn-delete:hover { background: #fecaca; }
 
-@media (max-width: 900px) {
-  .gcal-sidebar { display: none; }
+@media (max-width: 1200px) {
   .dow-full { display: none; }
   .dow-short { display: inline; }
-  .gcal-search-box { width: 130px; }
-  .period-title-text { font-size: 15px; }
+  .brand-sub { display: none; }
+  .topbar-actions-row { gap: 6px; }
+}
+
+@media (max-width: 992px) {
+  .gcal-sidebar { display: none; }
+  .brand-text h2 { font-size: 14.5px; }
+  .period-title-text { font-size: 14.5px; }
+  .gcal-topbar { padding: 8px 12px; }
+  .gcal-search-box { min-width: 120px; flex: 1; }
+  .calendar-view-toggle-btn { font-size: 11px; padding: 5px 10px; }
+  .btn-quick-add-leave { font-size: 11px; padding: 5px 10px; }
+  .month-cells-grid { grid-auto-rows: minmax(85px, 1fr); }
   .form-row-2 { grid-template-columns: 1fr; }
-  .category-tabs-row { overflow-x: auto; }
+  .category-tabs-row { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+
+@media (max-width: 768px) {
+  .gcal-topbar { padding: 8px 10px; gap: 8px; }
+  .topbar-main-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .brand-group { width: 100%; justify-content: space-between; }
+  .period-nav-group { width: 100%; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+  .gcal-today-btn, .demo-period-btn { padding: 4px 8px; font-size: 11px; }
+  .arrow-btn { width: 24px; height: 24px; font-size: 16px; }
+  .period-title-text { font-size: 13.5px; }
+  .topbar-actions-row { flex-wrap: wrap; gap: 6px; }
+  .gcal-search-box { width: 100%; min-width: 100%; order: 1; }
+  .calendar-view-toggle-btn { flex: 1; text-align: center; justify-content: center; order: 2; font-size: 11px; }
+  .btn-quick-add-leave { flex: 1; text-align: center; justify-content: center; order: 3; font-size: 11px; }
+  .month-view-container { min-width: 520px; }
+  .month-dow-header { padding: 6px 2px; font-size: 10.5px; }
+  .gcal-month-cell { padding: 3px; }
+  .date-number-bubble { width: 20px; height: 20px; font-size: 10.5px; }
+  .gcal-event-pill { font-size: 9.5px; padding: 1px 3px; }
+  .roster-table-section { padding: 16px 12px 28px; }
+  .roster-header-bar { flex-direction: column; align-items: stretch; gap: 10px; }
+  .date-navigator-box { justify-content: space-between; width: 100%; }
+  .btn-roster-add-main { width: 100%; justify-content: center; }
+  .category-subbar { flex-direction: column; align-items: stretch; gap: 8px; }
+  .status-subfilters { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .table-search-box { width: 100%; }
+}
+
+@media (max-width: 480px) {
+  .month-view-container { min-width: 460px; }
+  .month-cells-grid { grid-auto-rows: minmax(75px, 1fr); }
+  .gcal-modal-card { width: 95%; max-height: 90vh; }
+  .day-modal-header { padding: 12px 14px; }
+  .day-modal-body { padding: 14px; }
+  .modal-form-mode { padding: 16px 14px; }
+  .quick-duration-strip { flex-direction: column; align-items: flex-start; }
 }
 </style>

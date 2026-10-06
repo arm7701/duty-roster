@@ -311,7 +311,7 @@ onMounted(async () => {
       </div>
 
       <!-- 3. หน้าวันหยุด / วันลา / วันจำหน่าย -->
-      <div v-else-if="activeNav === 'วันหยุด/วันลา/วันจำหน่าย'" class="page-content">
+      <div v-else-if="activeNav === 'วันหยุด/วันลา/วันจำหน่าย'" class="page-content holiday-page-content">
         <HolidayView :personnelList="data?.personnel" />
       </div>
 
