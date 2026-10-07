@@ -107,6 +107,14 @@ const loadInitialHolidays = (): Holiday[] => {
 
 const holidaysList = ref<Holiday[]>(loadInitialHolidays())
 
+const saveHolidaysToStorage = () => {
+  try {
+    localStorage.setItem(HOLIDAY_STORAGE_KEY, JSON.stringify(holidaysList.value))
+  } catch (err) {
+    console.error('Error saving holidays to localStorage', err)
+  }
+}
+
 // ==========================================
 // 3. State & Persistence (วันลา / จำหน่าย / ไปราชการ)
 // ==========================================
@@ -577,8 +585,8 @@ const selectDateFromMini = (cell: { date: string }) => {
 // ==========================================
 // 8. CATEGORIZED LEAVE MANAGEMENT (แยกหมวดหมู่ตารางการลา)
 // ==========================================
-// หมวดหมู่หลัก: ทั้งหมด | ลาพักผ่อน | ไปราชการ | วันจำหน่าย | ลาป่วย/ลากิจ | ตารางเช็คชื่อกำลังพล
-type LeaveCategoryTab = 'all' | 'vacation' | 'duty_travel' | 'detached' | 'sick_personal' | 'officer_roster'
+// หมวดหมู่หลัก: ทั้งหมด | ลาพักผ่อน | ไปราชการ | วันจำหน่าย | ลาป่วย/ลากิจ | ตารางเช็คชื่อกำลังพล | วันหยุดราชการ/พิเศษ
+type LeaveCategoryTab = 'all' | 'vacation' | 'duty_travel' | 'detached' | 'sick_personal' | 'officer_roster' | 'holidays'
 const activeCategoryTab = ref<LeaveCategoryTab>('all')
 
 // ตัวกรองสถานะช่วงเวลา: ทั้งหมด | กำลังลาอยู่ในช่วงนี้ | ล่วงหน้า | สิ้นสุดแล้ว
@@ -625,8 +633,24 @@ const categoryCounts = computed(() => {
     duty_travel: list.filter((l) => l.type === 'duty_travel').length,
     detached: list.filter((l) => l.type === 'detached').length,
     sick_personal: list.filter((l) => l.type === 'sick' || l.type === 'personal').length,
-    officer_roster: availablePersonnel.value.length
+    officer_roster: availablePersonnel.value.length,
+    holidays: filteredHolidays.value.length
   }
+})
+
+// ข้อมูลวันหยุดที่ผ่านการกรองสำหรับตารางจัดการวันหยุด
+const displayedHolidays = computed(() => {
+  return filteredHolidays.value.filter((h) => {
+    if (leaveSearch.value.trim()) {
+      const q = leaveSearch.value.trim().toLowerCase()
+      const matchName = h.name.toLowerCase().includes(q)
+      const matchDesc = h.description ? h.description.toLowerCase().includes(q) : false
+      const matchDate = h.date.includes(q)
+      const matchEn = h.nameEn ? h.nameEn.toLowerCase().includes(q) : false
+      if (!matchName && !matchDesc && !matchDate && !matchEn) return false
+    }
+    return true
+  })
 })
 
 // รายการวันลาที่กรองตามหมวดหมู่ คำค้นหา และสถานะ
@@ -761,7 +785,7 @@ const openAddLeaveForDate = (dateStr?: string, preselectedOfficer?: string, defa
     id: `leave-${Date.now()}`,
     personnelName: officerName,
     division: officerObj?.division || 'SOD',
-    type: defaultType || (activeCategoryTab.value !== 'officer_roster' && activeCategoryTab.value !== 'all' && activeCategoryTab.value !== 'sick_personal' ? activeCategoryTab.value : 'vacation'),
+    type: defaultType || (activeCategoryTab.value !== 'officer_roster' && activeCategoryTab.value !== 'all' && activeCategoryTab.value !== 'sick_personal' && activeCategoryTab.value !== 'holidays' ? activeCategoryTab.value : 'vacation'),
     startDate: targetDate,
     endDate: targetDate,
     reason: '',
@@ -835,14 +859,116 @@ const handleDeleteLeave = (id: string) => {
 }
 
 // ==========================================
-// 10. Modals: วันหยุดราชการ (Holiday Modal)
+// 10. Modals: วันหยุดราชการ & วันหยุดพิเศษ (Holiday Modals)
 // ==========================================
 const isHolidayModalOpen = ref(false)
 const selectedHoliday = ref<Holiday | null>(null)
 
+const isSpecialHolidayModalOpen = ref(false)
+const specialHolidayModalMode = ref<'create' | 'edit'>('create')
+const specialHolidayForm = ref<Holiday>({
+  id: '',
+  date: todayString.value,
+  name: '',
+  nameEn: '',
+  category: 'special',
+  isGovernmentHoliday: true,
+  description: '',
+  dutyNote: '',
+  icon: '⭐'
+})
+
+const quickIcons = ['⭐', '✨', '🏛️', '🇹🇭', '🎉', '🏖️', '📌', '🚀', '👑', '🪷', '🔄', '🎖️']
+
 const openViewHolidayModal = (h: Holiday) => {
   selectedHoliday.value = h
   isHolidayModalOpen.value = true
+}
+
+const openAddSpecialHolidayModal = (targetDate?: string) => {
+  specialHolidayModalMode.value = 'create'
+  const dateToUse = targetDate || selectedRosterDate.value || todayString.value
+  specialHolidayForm.value = {
+    id: `holiday-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    date: dateToUse,
+    name: '',
+    nameEn: '',
+    category: 'special',
+    isGovernmentHoliday: true,
+    description: '',
+    dutyNote: 'จัดเวรตามรูปแบบวันหยุดราชการ กำลังพลประจำเวร 3 นาย (MD, FMO, GSO)',
+    icon: '⭐'
+  }
+  isSpecialHolidayModalOpen.value = true
+}
+
+const openEditSpecialHolidayModal = (h: Holiday) => {
+  specialHolidayModalMode.value = 'edit'
+  specialHolidayForm.value = { ...h }
+  isSpecialHolidayModalOpen.value = true
+  isHolidayModalOpen.value = false
+}
+
+const handleSaveSpecialHoliday = () => {
+  if (!specialHolidayForm.value.name.trim()) {
+    alert('กรุณากรอกชื่อวันหยุด')
+    return
+  }
+  if (!specialHolidayForm.value.date) {
+    alert('กรุณาเลือกวันที่')
+    return
+  }
+
+  const existingIdx = holidaysList.value.findIndex((h) => h.id === specialHolidayForm.value.id)
+  if (existingIdx !== -1) {
+    holidaysList.value[existingIdx] = { ...specialHolidayForm.value }
+  } else {
+    holidaysList.value.push({ ...specialHolidayForm.value })
+  }
+
+  // จัดเรียงตามวันที่
+  holidaysList.value.sort((a, b) => a.date.localeCompare(b.date))
+  saveHolidaysToStorage()
+
+  // อัปเดต selectedHoliday หากกำลังแสดงรายการนี้
+  if (selectedHoliday.value && selectedHoliday.value.id === specialHolidayForm.value.id) {
+    selectedHoliday.value = { ...specialHolidayForm.value }
+  }
+
+  // อัปเดต activeDayDetail หากเปิดอยู่
+  const currentActive = activeDayDetail.value
+  if (currentActive && currentActive.date === specialHolidayForm.value.date) {
+    currentActive.holidays = holidaysList.value.filter((h) => h.date === currentActive.date)
+  }
+
+  isSpecialHolidayModalOpen.value = false
+}
+
+const handleDeleteSpecialHoliday = (id: string) => {
+  const target = holidaysList.value.find((h) => h.id === id)
+  const name = target ? target.name : 'วันหยุดนี้'
+  if (confirm(`คุณต้องการลบ "${name}" ออกจากระบบวันหยุดใช่หรือไม่?`)) {
+    holidaysList.value = holidaysList.value.filter((h) => h.id !== id)
+    saveHolidaysToStorage()
+    isHolidayModalOpen.value = false
+    isSpecialHolidayModalOpen.value = false
+
+    const currentActive = activeDayDetail.value
+    if (currentActive) {
+      currentActive.holidays = holidaysList.value.filter((h) => h.date === currentActive.date)
+    }
+  }
+}
+
+const handleResetHolidays = () => {
+  if (confirm('คุณต้องการรีเซ็ตข้อมูลวันหยุดกลับเป็นค่าเริ่มต้นทั้งหมดใช่หรือไม่? (วันหยุดพิเศษที่เพิ่มไว้จะถูกรีเซ็ต)')) {
+    holidaysList.value = [...RAW_HOLIDAYS]
+    saveHolidaysToStorage()
+    const currentActive = activeDayDetail.value
+    if (currentActive) {
+      currentActive.holidays = holidaysList.value.filter((h) => h.date === currentActive.date)
+    }
+  }
 }
 
 const getOfficerInitials = (name: string) => {
@@ -929,6 +1055,11 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
           <span>{{ showLeavesOnCalendar ? '👁️ แสดงวันลาบนปฏิทิน' : '👁️ ซ่อนวันลา' }}</span>
         </button>
 
+        <!-- ปุ่มเพิ่มวันหยุดพิเศษ -->
+        <button class="btn-quick-add-holiday" title="เพิ่มวันหยุดราชการกรณีพิเศษ / วันหยุดพิเศษ" @click="openAddSpecialHolidayModal()">
+          <span>⭐</span> เพิ่มวันหยุดพิเศษ
+        </button>
+
         <!-- ปุ่มด่วน: เพิ่มคนลาในวันที่เลือก -->
         <button class="btn-quick-add-leave" @click="openAddLeaveForDate()">
           <span>＋</span> เพิ่มคนลา
@@ -944,6 +1075,12 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
         <button class="sidebar-big-create-btn" @click="openAddLeaveForDate()">
           <span class="big-plus">＋</span>
           <span>เพิ่มคนลาในวันที่เลือก</span>
+        </button>
+
+        <!-- ปุ่มเพิ่มวันหยุดพิเศษใน Sidebar -->
+        <button class="sidebar-secondary-create-btn" @click="openAddSpecialHolidayModal()">
+          <span class="btn-icon">⭐</span>
+          <span>เพิ่มวันหยุดพิเศษ</span>
         </button>
 
         <!-- มินิปฏิทิน (Mini Month Picker) -->
@@ -1235,12 +1372,21 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
             <span class="tab-text">สถานะกำลังพลรายบุคคล (เช็คชื่อ)</span>
             <span class="tab-count-badge dark">{{ categoryCounts.officer_roster }}</span>
           </button>
+
+          <button
+            :class="['category-tab-btn holiday-tab', { active: activeCategoryTab === 'holidays' }]"
+            @click="activeCategoryTab = 'holidays'"
+          >
+            <span class="tab-icon">⭐</span>
+            <span class="tab-text">วันหยุดราชการ & วันหยุดพิเศษ</span>
+            <span class="tab-count-badge purple">{{ categoryCounts.holidays }}</span>
+          </button>
         </div>
 
         <!-- เครื่องมือค้นหาและตัวกรองสถานะ -->
         <div class="category-subbar">
           <!-- กรณีเปิดแท็บหมวดหมู่การลา -->
-          <div v-if="activeCategoryTab !== 'officer_roster'" class="status-subfilters">
+          <div v-if="activeCategoryTab !== 'officer_roster' && activeCategoryTab !== 'holidays'" class="status-subfilters">
             <span class="subfilter-label">สถานะช่วงเวลา:</span>
             <button
               :class="['subfilter-btn', { active: leaveStatusFilter === 'all' }]"
@@ -1268,9 +1414,20 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
             </button>
           </div>
 
-          <div v-else class="status-subfilters">
+          <!-- กรณีเปิดแท็บสถานะรายบุคคล -->
+          <div v-else-if="activeCategoryTab === 'officer_roster'" class="status-subfilters">
             <span class="subfilter-label">ข้อมูลกำลังพลประจำวันที่:</span>
             <strong>{{ formatShortThaiDate(selectedRosterDate) }}</strong>
+          </div>
+
+          <!-- กรณีเปิดแท็บวันหยุดราชการและวันหยุดพิเศษ -->
+          <div v-else-if="activeCategoryTab === 'holidays'" class="status-subfilters holiday-subactions">
+            <button class="btn-subbar-add-holiday" @click="openAddSpecialHolidayModal()">
+              <span>⭐</span> เพิ่มวันหยุดพิเศษ
+            </button>
+            <button class="btn-subbar-reset" title="คืนค่าวันหยุดทั้งหมดเป็นค่าเริ่มต้น" @click="handleResetHolidays">
+              🔄 รีเซ็ตค่าเริ่มต้น
+            </button>
           </div>
 
           <div class="table-search-box">
@@ -1278,7 +1435,7 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
             <input
               v-model="leaveSearch"
               type="text"
-              placeholder="ค้นหาชื่อ, เหตุผล, คำสั่ง..."
+              :placeholder="activeCategoryTab === 'holidays' ? 'ค้นหาชื่อวันหยุด, มติ ครม., วันที่...' : 'ค้นหาชื่อ, เหตุผล, คำสั่ง...'"
             />
           </div>
         </div>
@@ -1288,7 +1445,7 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
            VIEW 1: ตารางรายการลาตามหมวดหมู่ (Leave Records Table)
            คอลัมน์กว้าง ชัดเจน ข้อมูลไม่ซ้อนกัน
            ======================================================== -->
-      <div v-if="activeCategoryTab !== 'officer_roster'" class="clean-table-container">
+      <div v-if="activeCategoryTab !== 'officer_roster' && activeCategoryTab !== 'holidays'" class="clean-table-container">
         <table class="roster-data-table">
           <thead>
             <tr>
@@ -1424,7 +1581,7 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
            VIEW 2: ตารางสถานะกำลังพลรายบุคคล (Officer Attendance Roster)
            แสดงรายชื่อกำลังพลทั้งหมด พร้อมสถานะและปุ่มกดตั้งวันลาโดยตรง
            ======================================================== -->
-      <div v-else class="clean-table-container">
+      <div v-else-if="activeCategoryTab === 'officer_roster'" class="clean-table-container">
         <table class="roster-data-table">
           <thead>
             <tr>
@@ -1540,6 +1697,123 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
           </tbody>
         </table>
       </div>
+
+      <!-- ========================================================
+           VIEW 3: ตารางวันหยุดราชการ & วันหยุดพิเศษ (Holidays Management Table)
+           ======================================================== -->
+      <div v-else-if="activeCategoryTab === 'holidays'" class="clean-table-container">
+        <table class="roster-data-table holiday-management-table">
+          <thead>
+            <tr>
+              <th style="width: 50px; text-align: center;">ลำดับ</th>
+              <th style="width: 170px;">วันที่</th>
+              <th style="width: 260px;">ชื่อวันหยุด</th>
+              <th style="width: 180px;">หมวดหมู่</th>
+              <th style="width: 160px; text-align: center;">สถานะหยุดงาน</th>
+              <th>รายละเอียด / ความสำคัญ / มติ ครม.</th>
+              <th style="width: 220px;">คำแนะนำจัดเวร SATOPS</th>
+              <th style="width: 140px; text-align: center;">การดำเนินการ</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(h, index) in displayedHolidays"
+              :key="h.id"
+              class="roster-row"
+            >
+              <td class="text-center text-muted">{{ index + 1 }}</td>
+
+              <!-- วันที่ -->
+              <td class="date-range-cell">
+                <span class="date-item"><b>{{ formatShortThaiDate(h.date) }}</b></span>
+                <small class="text-muted" style="display: block;">{{ h.date }}</small>
+              </td>
+
+              <!-- ชื่อวันหยุด -->
+              <td>
+                <div class="officer-info-wrap">
+                  <span class="officer-avatar-sm" style="background: #f3e8fd; font-size: 1.25rem;">{{ h.icon || '🏛️' }}</span>
+                  <div class="name-block">
+                    <strong class="name-text">{{ h.name }}</strong>
+                    <span v-if="h.nameEn" class="division-badge">{{ h.nameEn }}</span>
+                  </div>
+                </div>
+              </td>
+
+              <!-- หมวดหมู่ -->
+              <td>
+                <span
+                  class="cat-chip"
+                  :style="{
+                    backgroundColor: CATEGORY_CONFIG[h.category]?.bgLight || '#f3e8fd',
+                    color: CATEGORY_CONFIG[h.category]?.color || '#a142f4',
+                    border: `1px solid ${CATEGORY_CONFIG[h.category]?.border || '#e9d2fd'}`
+                  }"
+                >
+                  {{ CATEGORY_CONFIG[h.category]?.label || h.category }}
+                </span>
+              </td>
+
+              <!-- สถานะหยุดงาน -->
+              <td class="text-center">
+                <span v-if="h.isGovernmentHoliday" class="status-pill-badge" style="background-color: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5;">
+                  🏛️ หยุดราชการ
+                </span>
+                <span v-else class="status-pill-badge" style="background-color: #f1f5f9; color: #475569; border: 1px solid #cbd5e1;">
+                  💼 ปฏิบัติงานปกติ
+                </span>
+              </td>
+
+              <!-- รายละเอียด -->
+              <td>
+                <div class="reason-note-box">
+                  <span class="reason-title">{{ h.description || '-' }}</span>
+                </div>
+              </td>
+
+              <!-- คำแนะนำจัดเวร SATOPS -->
+              <td>
+                <span v-if="h.dutyNote" class="duty-note-text">🛡️ {{ h.dutyNote }}</span>
+                <span v-else class="text-muted text-sm">-</span>
+              </td>
+
+              <!-- การดำเนินการ -->
+              <td class="action-cell">
+                <div class="action-btn-group">
+                  <button
+                    class="btn-table-action edit"
+                    title="แก้ไขวันหยุดนี้"
+                    @click="openEditSpecialHolidayModal(h)"
+                  >
+                    ✏️ แก้ไข
+                  </button>
+                  <button
+                    class="btn-table-action delete"
+                    title="ลบวันหยุดนี้"
+                    @click="handleDeleteSpecialHoliday(h.id)"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              </td>
+            </tr>
+
+            <!-- กรณีไม่พบข้อมูล -->
+            <tr v-if="displayedHolidays.length === 0">
+              <td colspan="8" class="empty-table-cell">
+                <div class="empty-state-box">
+                  <span class="empty-icon">⭐</span>
+                  <p class="empty-title">ไม่พบวันหยุดตามเงื่อนไขที่ค้นหา</p>
+                  <p class="empty-sub">คุณสามารถกดปุ่มด้านล่างเพื่อเพิ่มวันหยุดราชการกรณีพิเศษได้ทันที</p>
+                  <button class="btn-primary-sm" style="background: #7c3aed;" @click="openAddSpecialHolidayModal()">
+                    ＋ เพิ่มวันหยุดพิเศษ
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <!-- ========================================================
@@ -1569,29 +1843,56 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
 
         <div class="day-modal-body">
           <!-- 1. วันหยุดราชการในวันนี้ -->
-          <div v-if="activeDayDetail.holidays.length > 0" class="day-section-block">
-            <h4 class="day-block-heading">🏛️ วันหยุดราชการ / วันสำคัญ</h4>
-            <div class="day-holidays-list">
+          <div class="day-section-block">
+            <div class="day-block-header-flex">
+              <h4 class="day-block-heading">🏛️ วันหยุดราชการ / วันพิเศษในวันนี้</h4>
+              <button
+                class="btn-sm-add-holiday"
+                title="เพิ่มวันหยุดพิเศษในวันนี้"
+                @click="openAddSpecialHolidayModal(activeDayDetail.date)"
+              >
+                <span>⭐</span> เพิ่มวันหยุดพิเศษในวันนี้
+              </button>
+            </div>
+
+            <div v-if="activeDayDetail.holidays.length > 0" class="day-holidays-list">
               <div
                 v-for="h in activeDayDetail.holidays"
                 :key="h.id"
                 class="day-holiday-card"
                 :style="{
-                  backgroundColor: CATEGORY_CONFIG[h.category].bgLight,
-                  borderLeft: `4px solid ${CATEGORY_CONFIG[h.category].color}`
+                  backgroundColor: CATEGORY_CONFIG[h.category]?.bgLight || '#f3e8fd',
+                  borderLeft: `4px solid ${CATEGORY_CONFIG[h.category]?.color || '#7c3aed'}`
                 }"
               >
-                <div class="holiday-card-title">
-                  <span class="h-icon">{{ h.icon || '🏛️' }}</span>
-                  <div>
-                    <strong>{{ h.name }}</strong>
-                    <span class="h-cat-label" :style="{ color: CATEGORY_CONFIG[h.category].color }">
-                      ({{ CATEGORY_CONFIG[h.category].label }})
-                    </span>
+                <div class="day-holiday-header">
+                  <div class="holiday-card-title" style="cursor: pointer;" @click="openViewHolidayModal(h)">
+                    <span class="h-icon">{{ h.icon || '🏛️' }}</span>
+                    <div>
+                      <strong>{{ h.name }}</strong>
+                      <span class="h-cat-label" :style="{ color: CATEGORY_CONFIG[h.category]?.color || '#7c3aed' }">
+                        ({{ CATEGORY_CONFIG[h.category]?.label || h.category }})
+                      </span>
+                    </div>
+                  </div>
+                  <div class="day-holiday-actions">
+                    <button class="btn-holiday-card-action edit" title="แก้ไขวันหยุด" @click="openEditSpecialHolidayModal(h)">
+                      ✏️ แก้ไข
+                    </button>
+                    <button class="btn-holiday-card-action delete" title="ลบวันหยุด" @click="handleDeleteSpecialHoliday(h.id)">
+                      🗑️ ลบ
+                    </button>
                   </div>
                 </div>
                 <p v-if="h.description" class="holiday-card-desc">{{ h.description }}</p>
+                <div v-if="h.dutyNote" class="holiday-card-duty-note">
+                  🛡️ <b>คำแนะนำจัดเวร:</b> {{ h.dutyNote }}
+                </div>
               </div>
+            </div>
+            <div v-else class="day-empty-holidays">
+              <span class="empty-icon-gray">📅</span>
+              <p>ไม่มีวันหยุดราชการหรือวันพิเศษในวันนี้ เป็นวันทำการปกติ</p>
             </div>
           </div>
 
@@ -1673,6 +1974,13 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
         <div class="day-modal-footer">
           <button class="btn-secondary" @click="scrollToRosterTable">
             📋 ไปที่ตารางด้านล่าง
+          </button>
+          <button
+            class="btn-special-holiday-footer"
+            title="เพิ่มวันหยุดราชการกรณีพิเศษในวันนี้"
+            @click="openAddSpecialHolidayModal(activeDayDetail.date)"
+          >
+            <span>⭐</span> เพิ่มวันหยุดพิเศษ
           </button>
           <button
             class="btn-primary"
@@ -1861,7 +2169,7 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
       <div class="gcal-modal-card">
         <div
           class="modal-color-strip"
-          :style="{ backgroundColor: CATEGORY_CONFIG[selectedHoliday.category].color }"
+          :style="{ backgroundColor: CATEGORY_CONFIG[selectedHoliday.category]?.color || '#a142f4' }"
         ></div>
         <div class="modal-top-actions">
           <button class="icon-action-btn close" @click="isHolidayModalOpen = false">✕</button>
@@ -1884,15 +2192,23 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
             <div class="modal-info-item">
               <span class="info-icon">🏷️</span>
               <div class="info-content">
-                <span class="cat-chip" :style="{ backgroundColor: CATEGORY_CONFIG[selectedHoliday.category].bgLight, color: CATEGORY_CONFIG[selectedHoliday.category].color }">
-                  {{ CATEGORY_CONFIG[selectedHoliday.category].label }}
+                <span class="cat-chip" :style="{ backgroundColor: CATEGORY_CONFIG[selectedHoliday.category]?.bgLight, color: CATEGORY_CONFIG[selectedHoliday.category]?.color }">
+                  {{ CATEGORY_CONFIG[selectedHoliday.category]?.label || selectedHoliday.category }}
                 </span>
+                <span v-if="selectedHoliday.isGovernmentHoliday" class="gov-badge-sm">🏛️ วันหยุดราชการ</span>
+                <span v-else class="gov-badge-sm not-off">💼 ปฏิบัติงานปกติ</span>
               </div>
             </div>
             <div v-if="selectedHoliday.description" class="modal-info-item">
               <span class="info-icon">📖</span>
               <div class="info-content">
                 <p class="modal-description">{{ selectedHoliday.description }}</p>
+              </div>
+            </div>
+            <div v-if="selectedHoliday.dutyNote" class="modal-info-item">
+              <span class="info-icon">🛡️</span>
+              <div class="info-content">
+                <p class="modal-description"><strong>คำแนะนำการจัดเวร SATOPS:</strong> {{ selectedHoliday.dutyNote }}</p>
               </div>
             </div>
             <!-- TODO: สำหรับ Developer - ส่วนแสดงข้อมูลผู้เข้าเวรในวันหยุดนี้ (เว้นไว้สำหรับเชื่อมต่อกับหน้าตารางเวร) -->
@@ -1906,6 +2222,189 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
               </div>
             </div>
           </div>
+
+          <!-- ปุ่มการดำเนินการสำหรับวันหยุด -->
+          <div class="holiday-modal-footer">
+            <button class="btn-holiday-action edit" title="แก้ไขข้อมูลวันหยุดนี้" @click="openEditSpecialHolidayModal(selectedHoliday)">
+              ✏️ แก้ไขข้อมูลวันหยุด
+            </button>
+            <button class="btn-holiday-action delete" title="ลบวันหยุดนี้ออกจากระบบ" @click="handleDeleteSpecialHoliday(selectedHoliday.id)">
+              🗑️ ลบวันหยุดนี้
+            </button>
+            <button class="btn-secondary" @click="isHolidayModalOpen = false">
+              ปิด
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================================
+         MODAL 4: บันทึก / แก้ไขวันหยุดราชการกรณีพิเศษ (Special Holiday Modal)
+         ======================================================== -->
+    <div
+      v-if="isSpecialHolidayModalOpen"
+      class="gcal-modal-backdrop"
+      @click.self="isSpecialHolidayModalOpen = false"
+    >
+      <div class="gcal-modal-card special-holiday-card">
+        <div
+          class="modal-color-strip"
+          :style="{ backgroundColor: CATEGORY_CONFIG[specialHolidayForm.category]?.color || '#a142f4' }"
+        ></div>
+
+        <div class="modal-form-mode">
+          <div class="form-modal-header">
+            <div class="leave-header-title">
+              <span class="leave-type-icon-lg">{{ specialHolidayForm.icon || '⭐' }}</span>
+              <div>
+                <h3>
+                  {{ specialHolidayModalMode === 'create' ? 'เพิ่มวันหยุดราชการกรณีพิเศษ / วันหยุดพิเศษ' : `แก้ไขข้อมูลวันหยุด: ${specialHolidayForm.name}` }}
+                </h3>
+                <span class="header-dev-note">บันทึกวันหยุดลงในระบบปฏิทินและจัดเก็บถาวร</span>
+              </div>
+            </div>
+            <button class="icon-action-btn close" @click="isSpecialHolidayModalOpen = false">✕</button>
+          </div>
+
+          <form @submit.prevent="handleSaveSpecialHoliday" class="gcal-form">
+            <!-- วันที่ & หมวดหมู่ -->
+            <div class="form-row-2">
+              <div class="form-group">
+                <label>วันที่ *</label>
+                <input
+                  v-model="specialHolidayForm.date"
+                  type="date"
+                  class="form-input"
+                  required
+                />
+              </div>
+
+              <div class="form-group">
+                <label>หมวดหมู่วันหยุด *</label>
+                <select
+                  v-model="specialHolidayForm.category"
+                  class="form-select"
+                  required
+                >
+                  <option value="special">✨ วันหยุดพิเศษ (มติ ครม.)</option>
+                  <option value="compensatory">🔄 วันหยุดชดเชย</option>
+                  <option value="government">🏛️ วันหยุดราชการประจำปี</option>
+                  <option value="royal">👑 วันสำคัญเกี่ยวกับสถาบัน</option>
+                  <option value="religious">🪷 วันสำคัญทางศาสนา</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- ชื่อวันหยุด (ไทย & อังกฤษ) -->
+            <div class="form-row-2">
+              <div class="form-group">
+                <label>ชื่อวันหยุด (ภาษาไทย) *</label>
+                <input
+                  v-model="specialHolidayForm.name"
+                  type="text"
+                  class="form-input"
+                  placeholder="เช่น วันหยุดราชการเป็นกรณีพิเศษ (มติ ครม.)"
+                  required
+                />
+              </div>
+
+              <div class="form-group">
+                <label>ชื่อภาษาอังกฤษ (ถ้ามี)</label>
+                <input
+                  v-model="specialHolidayForm.nameEn"
+                  type="text"
+                  class="form-input"
+                  placeholder="เช่น Special Public Holiday (Cabinet Resolution)"
+                />
+              </div>
+            </div>
+
+            <!-- สัญลักษณ์ / ไอคอน & ปุ่มเลือกด่วน -->
+            <div class="form-group">
+              <label>สัญลักษณ์ / ไอคอนประจำวันหยุด</label>
+              <div class="icon-selector-wrap">
+                <input
+                  v-model="specialHolidayForm.icon"
+                  type="text"
+                  class="form-input icon-input"
+                  style="max-width: 80px; text-align: center; font-size: 1.3rem;"
+                  placeholder="⭐"
+                />
+                <div class="quick-icons-list">
+                  <button
+                    v-for="ico in quickIcons"
+                    :key="ico"
+                    type="button"
+                    :class="['quick-icon-btn', { active: specialHolidayForm.icon === ico }]"
+                    @click="specialHolidayForm.icon = ico"
+                  >
+                    {{ ico }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- เช็คบ็อกซ์: นับเป็นวันหยุดราชการหรือไม่ -->
+            <div class="form-group checkbox-group">
+              <label class="custom-checkbox-label">
+                <input
+                  v-model="specialHolidayForm.isGovernmentHoliday"
+                  type="checkbox"
+                  class="custom-checkbox"
+                />
+                <span class="checkbox-text">
+                  <strong>เป็นวันหยุดราชการ (กำลังพลหยุดปฏิบัติงานปกติ)</strong>
+                  <span class="subtext">หากเลือก ระบบจะนับเป็นวันหยุดทำการสำหรับรูปแบบการจัดเวร</span>
+                </span>
+              </label>
+            </div>
+
+            <!-- รายละเอียด / มติ ครม. -->
+            <div class="form-group">
+              <label>รายละเอียด / ความสำคัญ / มติ ครม.</label>
+              <textarea
+                v-model="specialHolidayForm.description"
+                class="form-textarea"
+                rows="3"
+                placeholder="ระบุที่มาหรือรายละเอียด เช่น มติคณะรัฐมนตรีให้เป็นวันหยุดราชการกรณีพิเศษ..."
+              ></textarea>
+            </div>
+
+            <!-- คำแนะนำการจัดเวร SATOPS -->
+            <div class="form-group">
+              <label>คำแนะนำการจัดเวร SATOPS</label>
+              <input
+                v-model="specialHolidayForm.dutyNote"
+                type="text"
+                class="form-input"
+                placeholder="เช่น จัดเวรตามรูปแบบวันหยุดราชการ กำลังพลประจำเวร 3 นาย (MD, FMO, GSO)"
+              />
+            </div>
+
+            <!-- ปุ่มดำเนินการ -->
+            <div class="form-modal-actions">
+              <button
+                v-if="specialHolidayModalMode === 'edit'"
+                type="button"
+                class="btn-danger-outline"
+                @click="handleDeleteSpecialHoliday(specialHolidayForm.id)"
+              >
+                🗑️ ลบวันหยุดนี้
+              </button>
+              <div style="flex: 1;"></div>
+              <button
+                type="button"
+                class="btn-secondary"
+                @click="isSpecialHolidayModalOpen = false"
+              >
+                ยกเลิก
+              </button>
+              <button type="submit" class="btn-primary" style="background: #7c3aed;">
+                💾 {{ specialHolidayModalMode === 'create' ? 'บันทึกวันหยุดพิเศษ' : 'บันทึกการแก้ไข' }}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>
@@ -3110,6 +3609,310 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
 }
 .btn-delete:hover { background: #fecaca; }
 
+/* ========================================================
+   SPECIAL HOLIDAY & ENHANCED HOLIDAY STYLES
+   ======================================================== */
+.btn-quick-add-holiday {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: none;
+  background: #7c3aed;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(124, 58, 237, 0.25);
+  transition: all 0.15s ease;
+}
+.btn-quick-add-holiday:hover {
+  background: #6d28d9;
+  transform: translateY(-1px);
+}
+
+.sidebar-secondary-create-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  margin-top: 8px;
+  border-radius: 20px;
+  border: 1px solid #ddd6fe;
+  background: #f5f3ff;
+  color: #6d28d9;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sidebar-secondary-create-btn:hover {
+  background: #ede9fe;
+  border-color: #c4b5fd;
+}
+
+.category-tab-btn.holiday-tab.active {
+  border-color: #7c3aed;
+  color: #7c3aed;
+}
+
+.holiday-subactions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-subbar-add-holiday {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 5px;
+  background: #7c3aed;
+  color: #ffffff;
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-subbar-add-holiday:hover { background: #6d28d9; }
+
+.btn-subbar-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-subbar-reset:hover { background: #e2e8f0; color: #1e293b; }
+
+.btn-sm-add-holiday {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #7c3aed;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-radius: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-sm-add-holiday:hover { background: #ede9fe; }
+
+.day-holiday-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.day-holiday-actions {
+  display: flex;
+  gap: 5px;
+}
+.btn-holiday-card-action {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-holiday-card-action.edit {
+  background: #f1f5f9;
+  color: #334155;
+  border-color: #cbd5e1;
+}
+.btn-holiday-card-action.edit:hover { background: #e2e8f0; }
+.btn-holiday-card-action.delete {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.btn-holiday-card-action.delete:hover { background: #fee2e2; }
+
+.holiday-card-duty-note {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: #0369a1;
+  background: #f0f9ff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border-left: 3px solid #0284c7;
+}
+
+.day-empty-holidays {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-radius: 6px;
+  border: 1px dashed #cbd5e1;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.btn-special-holiday-footer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #7c3aed;
+  color: #ffffff;
+  border: none;
+  border-radius: 5px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-special-holiday-footer:hover { background: #6d28d9; }
+
+.holiday-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #f1f5f9;
+}
+.btn-holiday-action {
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+.btn-holiday-action.edit {
+  background: #ede9fe;
+  color: #6d28d9;
+  border-color: #c4b5fd;
+}
+.btn-holiday-action.edit:hover { background: #ddd6fe; }
+.btn-holiday-action.delete {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+.btn-holiday-action.delete:hover { background: #fecaca; }
+
+.gov-badge-sm {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-weight: 600;
+}
+.gov-badge-sm.not-off {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.special-holiday-card { width: min(600px, 100%); }
+
+.icon-selector-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.quick-icons-list {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.quick-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  font-size: 1.15rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.quick-icon-btn:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+.quick-icon-btn.active {
+  background: #ede9fe;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+}
+
+.custom-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+  background: #f8fafc;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+.custom-checkbox {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  cursor: pointer;
+}
+.checkbox-text {
+  display: flex;
+  flex-direction: column;
+}
+.checkbox-text strong {
+  font-size: 12.5px;
+  color: #1e293b;
+}
+.checkbox-text .subtext {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.btn-danger-outline {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+  border-radius: 5px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-danger-outline:hover { background: #fecaca; }
+
+.duty-note-text {
+  font-size: 11.5px;
+  color: #0369a1;
+  background: #f0f9ff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
 @media (max-width: 1200px) {
   .dow-full { display: none; }
   .dow-short { display: inline; }
@@ -3124,6 +3927,7 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
   .gcal-topbar { padding: 8px 12px; }
   .gcal-search-box { min-width: 120px; flex: 1; }
   .calendar-view-toggle-btn { font-size: 11px; padding: 5px 10px; }
+  .btn-quick-add-holiday { font-size: 11px; padding: 5px 10px; }
   .btn-quick-add-leave { font-size: 11px; padding: 5px 10px; }
   .month-cells-grid { grid-auto-rows: minmax(85px, 1fr); }
   .form-row-2 { grid-template-columns: 1fr; }
@@ -3141,7 +3945,8 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
   .topbar-actions-row { flex-wrap: wrap; gap: 6px; }
   .gcal-search-box { width: 100%; min-width: 100%; order: 1; }
   .calendar-view-toggle-btn { flex: 1; text-align: center; justify-content: center; order: 2; font-size: 11px; }
-  .btn-quick-add-leave { flex: 1; text-align: center; justify-content: center; order: 3; font-size: 11px; }
+  .btn-quick-add-holiday { flex: 1; text-align: center; justify-content: center; order: 3; font-size: 11px; }
+  .btn-quick-add-leave { flex: 1; text-align: center; justify-content: center; order: 4; font-size: 11px; }
   .month-view-container { min-width: 520px; }
   .month-dow-header { padding: 6px 2px; font-size: 10.5px; }
   .gcal-month-cell { padding: 3px; }
