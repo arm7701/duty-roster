@@ -1054,16 +1054,6 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
         >
           <span>{{ showLeavesOnCalendar ? '👁️ แสดงวันลาบนปฏิทิน' : '👁️ ซ่อนวันลา' }}</span>
         </button>
-
-        <!-- ปุ่มเพิ่มวันหยุดพิเศษ -->
-        <button class="btn-quick-add-holiday" title="เพิ่มวันหยุดราชการกรณีพิเศษ / วันหยุดพิเศษ" @click="openAddSpecialHolidayModal()">
-          <span>⭐</span> เพิ่มวันหยุดพิเศษ
-        </button>
-
-        <!-- ปุ่มด่วน: เพิ่มคนลาในวันที่เลือก -->
-        <button class="btn-quick-add-leave" @click="openAddLeaveForDate()">
-          <span>＋</span> เพิ่มคนลา
-        </button>
       </div>
     </header>
 
@@ -1071,10 +1061,10 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
     <div class="gcal-body-layout">
       <!-- แถบด้านข้างซ้าย (Left Sidebar) -->
       <aside v-if="isSidebarOpen" class="gcal-sidebar">
-        <!-- ปุ่มสร้างด่วนใน Sidebar -->
+        <!-- ปุ่มสร้างหลักใน Sidebar (Google Calendar Style) -->
         <button class="sidebar-big-create-btn" @click="openAddLeaveForDate()">
           <span class="big-plus">＋</span>
-          <span>เพิ่มคนลาในวันที่เลือก</span>
+          <span>เพิ่มคนลา</span>
         </button>
 
         <!-- ปุ่มเพิ่มวันหยุดพิเศษใน Sidebar -->
@@ -1287,9 +1277,6 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
             </div>
             <button class="btn-arrow" title="วันถัดไป" @click="changeRosterDate(1)">›</button>
           </div>
-          <button class="btn-roster-add-main" @click="openAddLeaveForDate()">
-            <span>＋</span> เพิ่มคนลาในวันที่นี้
-          </button>
         </div>
       </div>
 
@@ -3927,8 +3914,6 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
   .gcal-topbar { padding: 8px 12px; }
   .gcal-search-box { min-width: 120px; flex: 1; }
   .calendar-view-toggle-btn { font-size: 11px; padding: 5px 10px; }
-  .btn-quick-add-holiday { font-size: 11px; padding: 5px 10px; }
-  .btn-quick-add-leave { font-size: 11px; padding: 5px 10px; }
   .month-cells-grid { grid-auto-rows: minmax(85px, 1fr); }
   .form-row-2 { grid-template-columns: 1fr; }
   .category-tabs-row { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -3943,10 +3928,8 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
   .arrow-btn { width: 24px; height: 24px; font-size: 16px; }
   .period-title-text { font-size: 13.5px; }
   .topbar-actions-row { flex-wrap: wrap; gap: 6px; }
-  .gcal-search-box { width: 100%; min-width: 100%; order: 1; }
-  .calendar-view-toggle-btn { flex: 1; text-align: center; justify-content: center; order: 2; font-size: 11px; }
-  .btn-quick-add-holiday { flex: 1; text-align: center; justify-content: center; order: 3; font-size: 11px; }
-  .btn-quick-add-leave { flex: 1; text-align: center; justify-content: center; order: 4; font-size: 11px; }
+  .gcal-search-box { width: 100%; min-width: 100%; }
+  .calendar-view-toggle-btn { width: 100%; text-align: center; justify-content: center; font-size: 11px; }
   .month-view-container { min-width: 520px; }
   .month-dow-header { padding: 6px 2px; font-size: 10.5px; }
   .gcal-month-cell { padding: 3px; }
@@ -3955,7 +3938,6 @@ const formatPillName = (leave: PersonnelLeaveRecord) => {
   .roster-table-section { padding: 16px 12px 28px; }
   .roster-header-bar { flex-direction: column; align-items: stretch; gap: 10px; }
   .date-navigator-box { justify-content: space-between; width: 100%; }
-  .btn-roster-add-main { width: 100%; justify-content: center; }
   .category-subbar { flex-direction: column; align-items: stretch; gap: 8px; }
   .status-subfilters { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
   .table-search-box { width: 100%; }
