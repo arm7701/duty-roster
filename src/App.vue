@@ -801,7 +801,7 @@ onMounted(async () => {
     <aside class="sidebar">
       <div class="brand-lockup"><div class="brand-mark"><span>✦</span></div><div><p class="brand-title">SATOPS</p><p class="brand-subtitle">DUTY CONTROL</p></div></div>
       <div class="sidebar-section-label">เมนูหลัก</div>
-      <nav class="main-nav" aria-label="เมนูหลัก"><button v-for="item in ['ภาพรวม', 'ตารางเวร', 'บุคลากร', 'สถิติ']" :key="item" :class="['nav-item', { active: activeNav === item }]" @click="activeNav = item"><span class="nav-icon">{{ { 'ภาพรวม': '⌂', 'ตารางเวร': '▤', 'บุคลากร': '♙', 'สถิติ': '▥' }[item] }}</span>{{ item }}</button></nav>
+      <nav class="main-nav" aria-label="เมนูหลัก"><button v-for="item in ['ภาพรวม', 'ตารางเวร', 'บุคลากร', 'วันหยุด/วันลา/วันจำหน่าย', 'สถิติ']" :key="item" :class="['nav-item', { active: activeNav === item }]" @click="activeNav = item"><span class="nav-icon">{{ { 'ภาพรวม': '⌂', 'ตารางเวร': '▤', 'บุคลากร': '♙', 'วันหยุด/วันลา/วันจำหน่าย': '📅', 'สถิติ': '▥' }[item] }}</span>{{ item }}</button></nav>
       <div class="sidebar-section-label system-label">ระบบ</div>
       <nav class="main-nav"><button v-for="item in ['ประวัติการแก้ไข', 'ผู้ใช้งาน', 'ตั้งค่า']" :key="item" :class="['nav-item', { active: activeNav === item }]" @click="activeNav = item"><span class="nav-icon">{{ { 'ประวัติการแก้ไข': '⌁', 'ผู้ใช้งาน': '♧', 'ตั้งค่า': '⚙' }[item] }}</span>{{ item }}</button></nav>
       <div class="sidebar-footer"><div class="secure-indicator"><span></span> ระบบปฏิบัติการปกติ</div><div class="sidebar-version">SATOPS v1.0.0 · DEMO DATA</div></div>
@@ -844,9 +844,12 @@ onMounted(async () => {
         <PersonnelView :initialPersonId="activePersonnelId" />
       </div>
 
-      <!-- 4. หน้าวันหยุด / วันลา / วันจำหน่าย (ซ่อนไว้ชั่วคราว) -->
-      <div v-else-if="false && activeNav === 'วันหยุด/วันลา/วันจำหน่าย'" class="page-content holiday-page-content">
-        <HolidayView :personnelList="data?.personnel" />
+      <!-- 4. หน้าวันหยุด / วันลา / วันจำหน่าย -->
+      <div v-else-if="activeNav === 'วันหยุด/วันลา/วันจำหน่าย'" class="page-content holiday-page-content">
+        <HolidayView
+          :schedule="data?.schedule"
+          :personnelList="personnelList.map(p => ({ name: formatFullName(p), division: p.unit, roles: p.position }))"
+        />
       </div>
 
       <!-- 5. หน้าตารางเวร (Monthly Schedule) -->

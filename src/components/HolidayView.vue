@@ -63,43 +63,26 @@ const getDutyForDate = (_dateStr: string): DutyRoster | undefined => {
 
 // รายชื่อบุคลากรประจำหน่วยปฏิบัติการดาวเทียม SATOPS
 const defaultPersonnelList: OfficerInfo[] = [
-  { name: 'พ.อ. ณรงค์ฤทธิ์ วัฒนชัย', division: 'SOD', roles: 'MD · FMO' },
-  { name: 'น.อ. ธนกฤต มณีรัตน์', division: 'SOD', roles: 'MD' },
-  { name: 'พ.อ. วิชัย ศุภกิจ', division: 'SOD', roles: 'MD' },
-  { name: 'ร.ต.หญิง ปาริชาติ สุขเกษม', division: 'SOD', roles: 'FMO · GSO' },
-  { name: 'ร.ต. ธีรภัทร อุดมศรี', division: 'SOD', roles: 'FMO' },
-  { name: 'ร.ต.หญิง กมลชนก พูลเพิ่ม', division: 'SOD', roles: 'FMO' },
-  { name: 'จ.ส.อ. กิตติพงษ์ แสงทอง', division: 'ISR', roles: 'GSO' },
-  { name: 'จ.ส.อ. ชาญณรงค์ พรหมมา', division: 'ISR', roles: 'GSO' },
-  { name: 'จ.ส.อ. วีรพล อินทร์แก้ว', division: 'ISR', roles: 'GSO' }
+  { name: 'น.อ. กิตติพงษ์ ตัวอย่าง', division: 'หน่วยปฏิบัติการดาวเทียม', roles: 'หัวหน้าฝ่ายปฏิบัติการ' },
+  { name: 'น.ท. ธนกร ตัวอย่าง', division: 'หน่วยปฏิบัติการดาวเทียม', roles: 'รองหัวหน้าฝ่ายปฏิบัติการ' },
+  { name: 'ร.อ. ปาริชาติ ตัวอย่าง', division: 'หน่วยปฏิบัติการดาวเทียม', roles: 'จนท.ปฏิบัติการ' },
+  { name: 'ร.ท. ณัฐวุฒิ ตัวอย่าง', division: 'หน่วยปฏิบัติการดาวเทียม', roles: 'จนท.วิเคราะห์ข้อมูล' },
+  { name: 'จ.อ. ศุภชัย ตัวอย่าง', division: 'หน่วยปฏิบัติการดาวเทียม', roles: 'จนท.สื่อสาร' },
+  { name: 'จ.ท. วัชรา ตัวอย่าง', division: 'หน่วยปฏิบัติการดาวเทียม', roles: 'จนท.ธุรการ' },
+  { name: 'น.อ. สุรศักดิ์ ตัวอย่าง', division: 'หน่วยปฏิบัติการดาวเทียม', roles: 'หัวหน้าฝ่ายปฏิบัติการ' },
+  { name: 'น.ท. พิมพ์ชนก ตัวอย่าง', division: 'หน่วยปฏิบัติการดาวเทียม', roles: 'รองหัวหน้าฝ่ายปฏิบัติการ' },
+  { name: 'ร.อ. ธนวัฒน์ ตัวอย่าง', division: 'หน่วยปฏิบัติการดาวเทียม', roles: 'จนท.ปฏิบัติการ' }
 ]
 
 const availablePersonnel = computed<OfficerInfo[]>(() => {
-  const map = new Map<string, OfficerInfo>()
-
-  // 1. นำรายชื่อหลักทั้ง 9 นายของ SATOPS ใส่ก่อนเสมอ
-  defaultPersonnelList.forEach((p) => {
-    map.set(p.name, { ...p })
-  })
-
-  // 2. ผสานหรือเพิ่มเติมจาก props.personnelList ถ้ามี
   if (props.personnelList && props.personnelList.length > 0) {
-    props.personnelList.forEach((p) => {
-      const existing = map.get(p.name)
-      if (existing) {
-        if (p.division) existing.division = p.division
-        if (p.roles) existing.roles = p.roles
-      } else {
-        map.set(p.name, {
-          name: p.name,
-          division: p.division || 'SOD',
-          roles: p.roles || 'กำลังพล'
-        })
-      }
-    })
+    return props.personnelList.map((p) => ({
+      name: p.name,
+      division: p.division || 'หน่วยปฏิบัติการดาวเทียม',
+      roles: p.roles || 'กำลังพล'
+    }))
   }
-
-  return Array.from(map.values())
+  return defaultPersonnelList
 })
 
 // ==========================================
@@ -132,63 +115,39 @@ const LEAVE_STORAGE_KEY = 'satops_personnel_leaves_v1'
 const defaultDemoLeaves: PersonnelLeaveRecord[] = [
   {
     id: 'leave-1',
-    personnelName: 'ร.ต. ธีรภัทร อุดมศรี',
-    division: 'SOD',
+    personnelName: 'น.ท. ธนกร ตัวอย่าง',
+    division: 'หน่วยปฏิบัติการดาวเทียม',
     type: 'vacation',
-    startDate: '2026-10-02',
-    endDate: '2026-10-07',
+    startDate: '2026-10-12',
+    endDate: '2026-10-16',
     reason: 'ลาพักผ่อนประจำปี (เยี่ยมภูมิลำเนา)',
-    orderNo: 'อนุมัติ ศปก.ทบ. 412/69',
-    dutyReplacement: 'ร.ต.หญิง กมลชนก พูลเพิ่ม',
-    createdAt: '2026-09-25'
+    orderNo: 'อนุมัติ ศปก. 412/69',
+    dutyReplacement: 'น.อ. กิตติพงษ์ ตัวอย่าง',
+    createdAt: '2026-10-01'
   },
   {
     id: 'leave-2',
-    personnelName: 'จ.ส.อ. วีรพล อินทร์แก้ว',
-    division: 'ISR',
+    personnelName: 'จ.ท. วัชรา ตัวอย่าง',
+    division: 'หน่วยปฏิบัติการดาวเทียม',
     type: 'duty_travel',
-    startDate: '2026-10-05',
-    endDate: '2026-10-15',
-    reason: 'ไปราชการตรวจซ่อมบำรุงจานรับสัญญาณดาวเทียมภาคพื้นดิน จ.สงขลา',
-    orderNo: 'คำสั่ง สห.ทบ. ที่ 88/69',
-    dutyReplacement: 'จ.ส.อ. ชาญณรงค์ พรหมมา',
-    createdAt: '2026-09-28'
+    startDate: '2026-10-18',
+    endDate: '2026-10-23',
+    reason: 'ไปราชการตรวจซ่อมบำรุงจานรับสัญญาณดาวเทียมภาคพื้นดิน',
+    orderNo: 'คำสั่ง สห. ที่ 88/69',
+    dutyReplacement: 'จ.อ. ศุภชัย ตัวอย่าง',
+    createdAt: '2026-10-02'
   },
   {
     id: 'leave-3',
-    personnelName: 'พ.อ. วิชัย ศุภกิจ',
-    division: 'SOD',
+    personnelName: 'ร.ท. ณัฐวุฒิ ตัวอย่าง',
+    division: 'หน่วยปฏิบัติการดาวเทียม',
     type: 'detached',
-    startDate: '2026-10-01',
+    startDate: '2026-10-25',
     endDate: '2026-10-31',
-    reason: 'จำหน่ายไปช่วยราชการศูนย์ไซเบอร์ทหาร กองบัญชาการกองทัพไทย (1 เดือน)',
+    reason: 'จำหน่ายไปช่วยราชการศูนย์ไซเบอร์และการควบคุมวงโคจร',
     orderNo: 'คำสั่ง กห. 1042/69',
-    dutyReplacement: 'พ.อ. ณรงค์ฤทธิ์ วัฒนชัย',
-    createdAt: '2026-09-20'
-  },
-  {
-    id: 'leave-4',
-    personnelName: 'พ.อ. ณรงค์ฤทธิ์ วัฒนชัย',
-    division: 'SOD',
-    type: 'duty_travel',
-    startDate: '2026-10-16',
-    endDate: '2026-10-21',
-    reason: 'ไปราชการร่วมประชุมคณะทำงานความมั่นคงด้านอวกาศและการควบคุมวงโคจร',
-    orderNo: 'คำสั่ง บก.ทบ. 511/69',
-    dutyReplacement: 'น.อ. ธนกฤต มณีรัตน์',
-    createdAt: '2026-10-01'
-  },
-  {
-    id: 'leave-5',
-    personnelName: 'ร.ต.หญิง กมลชนก พูลเพิ่ม',
-    division: 'SOD',
-    type: 'vacation',
-    startDate: '2026-10-22',
-    endDate: '2026-10-28',
-    reason: 'ลาพักผ่อนประจำปี (ช่วงปลายเดือน)',
-    orderNo: 'อนุมัติ ศปก.ทบ. 458/69',
-    dutyReplacement: 'ร.ต.หญิง ปาริชาติ สุขเกษม',
-    createdAt: '2026-10-01'
+    dutyReplacement: 'ร.อ. ปาริชาติ ตัวอย่าง',
+    createdAt: '2026-10-03'
   }
 ]
 
@@ -198,7 +157,13 @@ const loadInitialLeaves = (): PersonnelLeaveRecord[] => {
     if (saved) {
       const parsed = JSON.parse(saved)
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed
+        const hasOldMock = parsed.some(
+          (r: PersonnelLeaveRecord) =>
+            r.personnelName?.includes('วิชัย') || r.personnelName?.includes('ณรงค์ฤทธิ์')
+        )
+        if (!hasOldMock) {
+          return parsed
+        }
       }
     }
   } catch (err) {
